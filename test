@@ -1,0 +1,64 @@
+public Map<Long, Map<String, DeepPropertyValue>> getKafkaClusterPropertiesBatch(List<KafkaCluster> clusters) {
+    Map<Long, Map<String, DeepPropertyValue>> allClusterProperties = new HashMap<>();
+
+    //Fetch default producer configs ONCE
+    List<DeepDefaultConfigDTO> defaultProducerBuildConfigs = deepDefaultConfigService.findByEntityType(EntityType.KAFKA_PRODUCER_BUILD_CONFIG);
+    List<DeepDefaultConfigDTO> globalKafkaClusterConfigs = deepDefaultConfigService.findGlobalDefaultConfigsByEntityType(EntityType.KAFKA_CLUSTER);
+
+    // Fetch custom configs for all clusters in one go
+    List<Long> clusterIds = clusters.stream().map(KafkaCluster::getId).toList();
+    List<DeepCustomConfigDTO> customConfigs = deepCustomConfigService.findByReferenceIdsAndEnvId(
+        clusters.get(0).getEnv().getId(), EntityType.KAFKA_PRODUCER_BUILD_CONFIG, clusterIds, EntityType.KAFKA_CLUSTER);
+
+    // Process properties for all clusters
+    for (KafkaCluster cluster : clusters) {
+        Map<String, DeepPropertyValue> configMap = new HashMap<>();
+
+        // Set Bootstrap Servers
+        String bootstrapServers = Arrays.stream(cluster.getHost().split(","))
+                .map(host -> host + ":" + cluster.getPort())
+                .collect(Collectors.joining(","));
+        configMap.put(Const.BOOTSTRAP_SERVERS_CONFIG, new DeepPropertyValue(bootstrapServers));
+
+        // Add default producer properties
+        for (DeepDefaultConfigDTO configDTO : defaultProducerBuildConfigs) {
+            configMap.put(configDTO.getProperty(), new DeepPropertyValue(configDTO.getPropertyValue(), configDTO.isCanOverride()));
+        }
+
+        // Add global Kafka configs
+        for (DeepDefaultConfigDTO defaultConfigDTO : globalKafkaClusterConfigs) {
+            configMap.put(defaultConfigDTO.getProperty(), new DeepPropertyValue(defaultConfigDTO.getPropertyValue()));
+        }
+
+        // Apply custom configs (Override default properties)
+        for (DeepCustomConfigDTO customConfig : customConfigs) {
+            if (customConfig.getReferencedId().equals(cluster.getId())) {
+                configMap.put(customConfig.getPropertyName(), new DeepPropertyValue(customConfig.getPropertyValue()));
+            }
+        }
+
+        // Security Check
+        if (Boolean.TRUE.equals(configMap.getOrDefault(Const.IS_SECURITY_ENABLED, new DeepPropertyValue("false")).getValue())) {
+            if (cluster.getPassword() != null && publicKey != null) {
+                try {
+                    String pWord = RSAUtil.INSTANCE.decrypt(cluster.getPassword(), publicKey);
+                    if (configMap.containsKey(Const.KAFKA_SASL_JAAS_CONFIG)) {
+                        String jaasCfg = buildJaasConfigString(configMap, cluster.getAdminUserName(), pWord);
+                        configMap.put(Const.KAFKA_SASL_JAAS_CONFIG, new DeepPropertyValue(jaasCfg));
+                    }
+                } catch (Exception e) {
+                    log.error("Kafka Password Decryption Exception for Cluster {}: {}", cluster.getId(), e);
+                }
+            }
+            configMap.remove(Const.KAFKA_SUPER_PASSWORD);
+        } else {
+            List<String> keysToRemove = List.of(Const.KAFKA_SASL_JAAS_CONFIG, Const.KAFKA_SUPER_PASSWORD,
+                    Const.SECURITY_PROTOCOL, Const.SASL_MECHANISM, Const.ALGORITHM, Const.PUBLIC_KEY);
+            keysToRemove.forEach(configMap::remove);
+        }
+
+        allClusterProperties.put(cluster.getId(), configMap);
+    }
+
+    return allClusterProperties;
+}
