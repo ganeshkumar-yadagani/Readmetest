@@ -1,0 +1,12 @@
+jobs:
+  - name: test-cleanup-job
+    schedule: "*/2 * * * *"
+    basicAuth: true
+    args:
+      - "https://mock-api.internal/cleanup"
+
+  - name: test-refresh-job
+    schedule: "0 1 * * *"
+    basicAuth: false
+    args:
+      - "https://mock-api.internal/refresh"
