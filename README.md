@@ -1,135 +1,101 @@
+# HandlerInfoRabbitConsumer
 
-# **DEEPio Config Server** 🌐
+This is a Spring Boot-based message consumer application that listens to RabbitMQ queues. It supports OAuth2 and certificate-based authentication, dynamic RabbitMQ configuration, and Cassandra for persistence. Designed as part of a broader platform, it provides a secure and flexible foundation for processing inbound messages.
 
-A **Spring Boot application** that merges YAML configuration files from multiple sources and exposes them through a **REST API**. Built using **Spring Cloud Config Server** and **SnakeYAML**, this project is ideal for managing configuration across multiple environments.
+## 🚀 Features
 
----
-
-## 🚀 **Features**
-- Fetches configuration from remote repositories (Git, Bitbucket, GitHub).
-- Merges properties from multiple YAML files.
-- Returns clean YAML responses through REST endpoints.
-- Handles nested keys and conflicts during merging.
-- Robust exception handling and informative error messages.
-- Simple and minimal configuration.
+- 🔄 Dynamic RabbitMQ consumer configuration
+- 🔐 Secure authentication using OAuth2 (MSAL4J) and X.509 certificates
+- 📦 Cassandra integration for storing metadata
+- 🛡️ Spring Security configuration for endpoint protection
+- ⚙️ Centralized listener logic for handling messages
+- 🔧 Utility classes for tokens, logging, and formatting
 
 ---
 
-## 📁 **Project Structure**
+## 🏗️ Project Structure
+
 ```
-src/main/java
-└── com.tmobile.deepio.configserver
-    ├── ConfigServerApplication.java
-    ├── controller
-    │   └── YamlResolveController.java
-    ├── exception
-    │   ├── CustomErrorResponse.java
-    │   ├── GlobalExceptionHandler.java
-    │   └── YamlMergeException.java
-    └── service
-        └── YamlResolveService.java
-```
-
----
-
-## 🛠️ **Built With**
-| Dependency                         | Description                                        |
-|------------------------------------|----------------------------------------------------|
-| **Spring Boot**                    | Framework for building the application.            |
-| **Spring Cloud Config Server**     | Fetches configuration files from remote repositories. |
-| **SnakeYAML**                      | Parses and processes YAML files.                   |
-
----
-
-## 📦 **Setup Instructions**
-
-### **Step 1:** Clone the repository
-```bash
-git clone https://github.com/yourusername/spring-boot-yaml-configserver.git
-cd spring-boot-yaml-configserver
-```
-
-### **Step 2:** Build the project
-```bash
-mvn clean install
-```
-
-### **Step 3:** Run the project
-```bash
-mvn spring-boot:run
+├── config
+│   ├── CassandraConfig.java
+│   ├── RabbitConsumerConfiguration.java
+│   └── MapperBuilderConfiguration.java
+│
+├── consumer
+│   └── HandlerInfoListener.java
+│
+├── security
+│   └── WebSecurityConfiguration.java
+│
+├── util
+│   ├── Util.java
+│   ├── MsalUtils.java
+│   └── DeepCredentialsRefreshProvider.java
+│
+└── README.md
 ```
 
 ---
 
-## 🔧 **Configuration**
-### **Remote Repository Configuration**
-Specify the URI of your remote configuration repository (GitLab, Bitbucket, etc.) in `bootstrap.properties`:
+## ⚙️ Component Summary
 
-```properties
-spring.cloud.config.server.git.uri=https://gitlab.com/your-repo/configurations
-spring.cloud.config.server.git.default-label=main
+### `CassandraConfig.java`
+Configures Cassandra keyspace, contact points, and session factory for data persistence.
+
+### `RabbitConsumerConfiguration.java`
+Initializes queues, exchanges, bindings, and the listener container with support for different auth modes and multi-environment setups.
+
+### `WebSecurityConfiguration.java`
+Secures HTTP endpoints; allows unauthenticated access to health and actuator endpoints.
+
+### `HandlerInfoListener.java`
+Consumes and processes RabbitMQ messages. Handles failures with structured logging and optional retry logic.
+
+---
+
+## 🔐 Authentication Mechanisms
+
+### OAuth2 (Azure AD)
+- Uses `MsalUtils` and `DeepCredentialsRefreshProvider` to fetch and refresh access tokens via MSAL4J.
+
+### Certificate-Based
+- SSL context is configured dynamically to support secure RabbitMQ connections using X.509 certs.
+
+---
+
+## 🧰 Utility Classes
+
+- **`Util.java`** – Date formatting helper.
+- **`MsalUtils.java`** – Token acquisition using MSAL4J.
+- **`DeepCredentialsRefreshProvider.java`** – Auto-refreshing access token provider for RabbitMQ.
+- **`ExceptionUtils.printStackTrace(e, limit: 0)`** – Custom stack trace formatter used in message listeners.
+
+---
+
+## ✅ Health Check
+
+The following endpoint is used for readiness/liveness probes:
+
+```
+GET /actuator/health
 ```
 
 ---
 
-## 🔗 **REST API Usage**
+## 💬 How to Test
 
-### **Endpoint**
-```
-GET /yaml/{application}/{profile}
-```
-
-| Parameter    | Description                                |
-|--------------|--------------------------------------------|
-| application  | The name of the application (e.g., `app1`) |
-| profile      | The environment/profile (e.g., `dev`)      |
-
-### **Example Request**
-```bash
-GET http://localhost:8080/yaml/app1/dev
-```
-
-### **Example Response**
-```yaml
-app:
-  name: MyApplication
-logging:
-  level: DEBUG
-database:
-  host: localhost
-  port: 5432
-```
+- Deploy RabbitMQ with appropriate queues/exchanges.
+- Post messages to the queue and observe logs from `HandlerInfoListener`.
+- Verify tokens or cert-based authentication via logs.
 
 ---
 
-## 🛑 **Error Handling**
-The application provides clean error responses when failures occur, such as YAML merging errors or unavailable sources.
+## 👤 Maintained By
 
-### **Error Response Example**
-```json
-{
-    "statusCode": 500,
-    "message": "YAML merge failed: Error merging YAML for application: app1, profile: dev"
-}
-```
+T-Mobile Deep Messaging Platform Team
 
 ---
 
-## 📚 **Project Overview**
+## 📄 License
 
-### **1. `YamlResolveController`**
-Handles REST requests and returns merged YAML configurations.
-
-### **2. `YamlResolveService`**
-- Fetches configuration properties from multiple sources.
-- Merges configurations using nested YAML structures.
-- Handles conflicts when multiple files provide the same keys.
-
-### **3. `GlobalExceptionHandler`**
-Catches application-specific and generic exceptions, returning meaningful error responses.
-
-### **4. `CustomErrorResponse`**
-Defines the structure of the error response containing:
-  - `statusCode`: HTTP status code (e.g., 500).
-  - `message`: A user-friendly error message.
-
+Internal use only. Unauthorized redistribution is prohibited.
