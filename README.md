@@ -1,31 +1,41 @@
-feat(security): add cert-based RabbitMQ authentication with MSAL4J + Azure Core support
+feat: Add cert-based RabbitMQ authentication with MSAL integration
 
-- Integrated certificate-based SSL for RabbitMQ connection
-- Added MSAL4J-based OAuth2 authentication (client credentials flow)
-- Included Azure Core dependencies
-- Cleaned up pom.xml for dependency alignment
-- Added README file describing system purpose and setup
+- Introduced certificate-based OAuth2 token acquisition for RabbitMQ
+- Added DeepCredentialsRefreshProvider for proactive token refresh
+- Added MsalUtils for private key and certificate handling
+- Updated RabbitMQConfiguration to support both cert and secret-based auth
+- Modified AzureUtil for dynamic credential selection
+- Added msal4j and azure-core versions in pom.xml
+
+
+
+Add certificate-based RabbitMQ authentication with proactive token refresh
 
 
 ### Summary
-This MR adds support for secure RabbitMQ authentication using certificate-based SSL and Azure AD OAuth2 integration. It also includes MSAL4J and Azure Core dependencies for token management, and updates the `pom.xml` for cleanup and alignment.
+This MR enables secure RabbitMQ connections via certificate-based OAuth2 authentication using MSAL4J. It introduces dynamic credential resolution and proactive token refresh support.
 
 ### Key Changes
-- Enabled cert-based RabbitMQ connection using SSLContextUtil
-- Integrated MSAL4J with support for token refresh via DefaultCredentialsRefreshService
-- Added Azure Core dependency for compatibility
-- Cleaned up unused or redundant entries in `pom.xml`
-- Introduced initial `README.md` with project overview, purpose, and setup instructions
+- ➕ **New utility classes**:
+  - `DeepCredentialsRefreshProvider`: Extends RefreshProtectedCredentialProvider for token refresh.
+  - `MsalUtils`: Extracts private keys and certificates from encoded strings.
+- 🔐 **Enhanced RabbitMQConfiguration**:
+  - Added conditional logic to choose between certificate and secret-based authentication.
+  - Integrated MSAL token generation flow using client certificate and tenant info.
+- 🛠️ **AzureUtil Refactor**:
+  - Added logic to fetch tokens using either secret or cert.
+- 📦 **pom.xml**:
+  - Added and updated `msal4j` and `azure-core` dependency versions.
+  - Cleaned up property management for easier upgrades.
 
-### Impact
-- Improves security and flexibility in RabbitMQ connection handling
-- Adds support for Azure environments
-- Enhances documentation for onboarding and operations
+### Benefits
+- Enables secure and scalable authentication for RabbitMQ
+- Supports rotating certs/tokens with minimal code changes
+- Aligns with enterprise security best practices
 
-### Related Files
-- `RabbitConsumerConfiguration.java`
-- `MsalUtils.java`, `DeepCredentialsRefreshProvider.java`
-- `pom.xml`
-- `README.md`
+### Testing
+- Verified both secret and cert-based flows
+- Confirmed correct token generation and RabbitMQ connection
+- All unit tests passed locally
 
-Please review and approve.
+Please review and approve for merge.
