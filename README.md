@@ -1,140 +1,124 @@
-package com.tmobile.deep.tokengenerator;
+package com.deep.token.core;
 
-import javax.net.ssl.*;
+import com.deep.token.config.ApiTokenConfig;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+/**
+ * TokenGeneratorUtil selects the appropriate token strategy based on config.
+ * It delegates to either Azure AD certificate-based token generation or Basic Auth.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class TokenGeneratorUtil {
+
+    private final ApiTokenConfig apiTokenConfig;
+    private final AzureTokenClient azureTokenClient;
+    private final BasicTokenClient basicTokenClient;
+
+    /**
+     * Entry point method for token generation.
+     * Delegates to Azure or Basic token generator.
+     *
+     * @return AuthToken containing access and optional ID token
+     */
+    public AuthToken generateAccessToken() {
+        log.info("TokenGeneratorUtil: Generating token using {} flow",
+                apiTokenConfig.isUseAzureAuth() ? "Azure AD" : "Basic Auth");
+
+        if (apiTokenConfig.isUseAzureAuth()) {
+            return new AuthToken(azureTokenClient.generateToken());
+        } else {
+            return new AuthToken(basicTokenClient.generateToken());
+        }
+    }
+}
+package com.deep.token.core;
+
+import com.deep.token.config.ApiTokenConfig;
+import com.microsoft.aad.msal4j.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
 import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.*;
-import java.security.cert.*;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Collections;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.Base64;
 
-public class SslContextBuilderUtil {
+/**
+ * AzureTokenClient handles Azure AD certificate-based token acquisition.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class AzureTokenClient {
 
-    public static SSLContext buildSslContext(String certPem, String keyPem) throws Exception {
-        X509Certificate certificate = parseCertificate(certPem);
-        PrivateKey privateKey = parsePrivateKey(keyPem);
+    private final ApiTokenConfig apiTokenConfig;
 
-        // Create a KeyStore containing our cert and private key
-        KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        keyStore.load(null, null);
-        keyStore.setKeyEntry("client", privateKey, "changeit".toCharArray(), new Certificate[]{certificate});
+    public AuthToken generateToken() {
+        try {
+            ConfidentialClientApplication app = ConfidentialClientApplication.builder(
+                    apiTokenConfig.getClientId(),
+                    ClientCredentialFactory.createFromCertificate(
+                            loadCertificate(),
+                            loadPrivateKey())
+            ).authority("https://login.microsoftonline.com/" + apiTokenConfig.getTenantId())
+             .build();
 
-        // Initialize KeyManagerFactory with the keystore
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, "changeit".toCharArray());
+            ClientCredentialParameters parameters = ClientCredentialParameters.builder(
+                    Collections.singleton(apiTokenConfig.getScope())
+            ).build();
 
-        // Use default trust managers (Java's truststore)
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init((KeyStore) null);
+            CompletableFuture<IAuthenticationResult> future = app.acquireToken(parameters);
+            IAuthenticationResult result = future.get();
 
-        // Initialize SSLContext
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
+            return new AuthToken(result.accessToken(), result.idToken());
 
-        return sslContext;
+        } catch (ExecutionException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("Azure AD token retrieval interrupted: {}", e.getMessage(), e);
+            throw new RuntimeException("Azure AD token acquisition interrupted", e);
+
+        } catch (Exception e) {
+            log.error("Azure AD token acquisition failed: {}", e.getMessage(), e);
+            throw new RuntimeException("Azure AD token acquisition failed", e);
+        }
     }
 
-    private static X509Certificate parseCertificate(String certPem) throws CertificateException {
-        String cleanPem = certPem.replaceAll("-----BEGIN CERTIFICATE-----", "")
-                                 .replaceAll("-----END CERTIFICATE-----", "")
-                                 .replaceAll("\\s+", "");
+    private X509Certificate loadCertificate() throws Exception {
+        String cleanPem = apiTokenConfig.getCertPem()
+                .replaceAll("-----BEGIN CERTIFICATE-----", "")
+                .replaceAll("-----END CERTIFICATE-----", "")
+                .replaceAll("\\s+", "");
         byte[] certBytes = Base64.getDecoder().decode(cleanPem);
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certBytes));
+        CertificateFactory factory = CertificateFactory.getInstance("X.509");
+        return (X509Certificate) factory.generateCertificate(new ByteArrayInputStream(certBytes));
     }
 
-    private static PrivateKey parsePrivateKey(String keyPem) throws Exception {
-        String cleanPem = keyPem.replaceAll("-----BEGIN (.*) PRIVATE KEY-----", "")
-                                .replaceAll("-----END (.*) PRIVATE KEY-----", "")
-                                .replaceAll("\\s+", "");
+    private PrivateKey loadPrivateKey() throws Exception {
+        String cleanPem = apiTokenConfig.getKeyPem()
+                .replaceAll("-----BEGIN (.*) PRIVATE KEY-----", "")
+                .replaceAll("-----END (.*) PRIVATE KEY-----", "")
+                .replaceAll("\\s+", "");
         byte[] keyBytes = Base64.getDecoder().decode(cleanPem);
         PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        KeyFactory kf = KeyFactory.getInstance("RSA");
-        return kf.generatePrivate(keySpec);
+        return KeyFactory.getInstance("RSA").generatePrivate(keySpec);
     }
-} 
-package com.tmobile.deep.tokengenerator;
+}
+package com.deep.token.core;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.http.MediaType;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
-import org.springframework.retry.backoff.FixedBackOffPolicy;
-import org.springframework.retry.support.RetryTemplate;
-import org.springframework.web.client.RestTemplate;
-
-import javax.net.ssl.SSLContext;
-import java.time.Duration;
-import java.util.Collections;
-
-@Configuration
-public class AppConfig {
-
-    @Autowired
-    private ApiTokenConfig config;
-
-    @Bean("restTemplateBasic")
-    public RestTemplate restTemplateBasic() {
-        return new RestTemplateBuilder()
-                .setConnectTimeout(Duration.ofMillis(config.getTimeOut()))
-                .setReadTimeout(Duration.ofMillis(config.getTimeOut()))
-                .messageConverters(new MappingJackson2HttpMessageConverter(Collections.singletonList(MediaType.APPLICATION_JSON)))
-                .build();
-    }
-
-    @Bean("restTemplateCert")
-    public RestTemplate restTemplateCert() throws Exception {
-        SSLContext sslContext = SslContextBuilderUtil.buildSslContext(config.getCertPem(), config.getKeyPem());
-        return new RestTemplateBuilder()
-                .requestFactory(() -> {
-                    try {
-                        return new HttpComponentsClientHttpRequestFactoryWithSSL(sslContext);
-                    } catch (Exception e) {
-                        throw new RuntimeException("Failed to initialize custom SSL context", e);
-                    }
-                })
-                .setConnectTimeout(Duration.ofMillis(config.getTimeOut()))
-                .setReadTimeout(Duration.ofMillis(config.getTimeOut()))
-                .messageConverters(new MappingJackson2HttpMessageConverter(Collections.singletonList(MediaType.APPLICATION_JSON)))
-                .build();
-    }
-
-    @Bean("retryTemplate")
-    public RetryTemplate retryTemplate() {
-        RetryTemplate retryTemplate = new RetryTemplate();
-        FixedBackOffPolicy backOffPolicy = new FixedBackOffPolicy();
-        backOffPolicy.setBackOffPeriod(config.getRetryDelay());
-        retryTemplate.setBackOffPolicy(backOffPolicy);
-        retryTemplate.setRetryPolicy(new HttpStatusRetryPolicy(config));
-        return retryTemplate;
-    }
-} 
-package com.tmobile.deep.tokengenerator;
-
-import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.ssl.SSLContexts;
-import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
-
-import javax.net.ssl.SSLContext;
-
-public class HttpComponentsClientHttpRequestFactoryWithSSL extends HttpComponentsClientHttpRequestFactory {
-
-    public HttpComponentsClientHttpRequestFactoryWithSSL(SSLContext sslContext) {
-        super(HttpClients.custom()
-                .setSSLSocketFactory(new SSLConnectionSocketFactory(sslContext))
-                .build());
-    }
-} 
-package com.tmobile.deep.tokengenerator;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.deep.token.config.ApiTokenConfig;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.*;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
@@ -145,126 +129,46 @@ import org.springframework.web.client.RestTemplate;
 import java.util.Collections;
 import java.util.Map;
 
+/**
+ * BasicTokenClient handles Basic Auth token generation using RestTemplate.
+ */
 @Slf4j
 @Component
-public class TokenGeneratorUtil {
+@RequiredArgsConstructor
+public class BasicTokenClient {
 
-    @Autowired
-    private ApiTokenConfig config;
+    private final RestTemplate restTokenTemplateBasic;
+    private final RetryTemplate retryTemplate;
+    private final ApiTokenConfig apiTokenConfig;
 
-    @Autowired
-    @Qualifier("restTemplateBasic")
-    private RestTemplate restTemplateBasic;
+    public AuthToken generateToken() {
+        String url = apiTokenConfig.getTokenUrl();
+        HttpEntity<String> request = buildRequestEntity();
 
-    @Autowired
-    @Qualifier("restTemplateCert")
-    private RestTemplate restTemplateCert;
-
-    @Autowired
-    private RetryTemplate retryTemplate;
-
-    public AuthToken generateAccessToken() {
-        String endpoint = config.getHostname() + config.getBasepath();
-        HttpEntity<String> request = createRequest();
-
-        RestTemplate selectedTemplate = config.isUseCertificateAuth() ? restTemplateCert : restTemplateBasic;
-
-        ResponseEntity<String> response = retryTemplate.execute(context -> {
-            try {
-                return selectedTemplate.exchange(endpoint, HttpMethod.POST, request, String.class);
-            } catch (HttpStatusCodeException | ResourceAccessException ex) {
-                log.warn("Retry attempt {} failed: {}", context.getRetryCount(), ex.getMessage());
-                throw ex;
-            }
-        });
-
-        return parseResponse(response);
-    }
-
-    private HttpEntity<String> createRequest() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        if (!config.isUseCertificateAuth()) {
-            headers.set("Authorization", config.getAuthorization());
-        }
-        return new HttpEntity<>("{}", headers); // sending an empty JSON body
-    }
-
-    private AuthToken parseResponse(ResponseEntity<String> response) {
-        AuthToken token = new AuthToken();
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            Map<String, Object> body = mapper.readValue(response.getBody(), Map.class);
-            token.setAccessToken((String) body.get("access_token"));
-            token.setIdToken((String) body.get("id_token"));
+            ResponseEntity<Map> response = retryTemplate.execute(context -> {
+                try {
+                    return restTokenTemplateBasic.exchange(url, HttpMethod.POST, request, Map.class);
+                } catch (HttpStatusCodeException | ResourceAccessException ex) {
+                    log.warn("Retry attempt {}/{} failed for Basic Auth token call: {}", context.getRetryCount() + 1, apiTokenConfig.getRetry(), ex.getMessage());
+                    throw ex;
+                }
+            });
+
+            Map<String, Object> body = response.getBody();
+            return new AuthToken((String) body.get("access_token"), (String) body.get("id_token"));
+
         } catch (Exception e) {
-            log.error("Error parsing token response", e);
+            log.error("Failed to retrieve Basic Auth token: {}", e.getMessage(), e);
+            throw new RuntimeException("Basic Auth token generation failed", e);
         }
-        return token;
-    }
-} 
-package com.tmobile.deep.tokengenerator;
-
-import javax.net.ssl.*;
-import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
-import java.security.*;
-import java.security.cert.*;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.util.Base64;
-
-public class SslContextBuilderUtil {
-
-    public static SSLContext buildSslContext(String certPem, String keyPem) throws Exception {
-        return buildSslContext(certPem, keyPem, null, null);
     }
 
-    public static SSLContext buildSslContext(String certPem, String keyPem, String trustStoreBase64, String trustStorePassword) throws Exception {
-        X509Certificate certificate = parseCertificate(certPem);
-        PrivateKey privateKey = parsePrivateKey(keyPem);
-
-        // Create a KeyStore containing our cert and private key
-        KeyStore keyStore = KeyStore.getInstance("PKCS12");
-        keyStore.load(null, null);
-        keyStore.setKeyEntry("client", privateKey, "changeit".toCharArray(), new Certificate[]{certificate});
-
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, "changeit".toCharArray());
-
-        // Trust store configuration
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        if (trustStoreBase64 != null && trustStorePassword != null) {
-            byte[] trustBytes = Base64.getDecoder().decode(trustStoreBase64);
-            KeyStore trustStore = KeyStore.getInstance("JKS"); // or PKCS12 if needed
-            trustStore.load(new ByteArrayInputStream(trustBytes), trustStorePassword.toCharArray());
-            tmf.init(trustStore);
-        } else {
-            tmf.init((KeyStore) null); // Default system trust store
-        }
-
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
-
-        return sslContext;
+    private HttpEntity<String> buildRequestEntity() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.setAccept(Collections.singletonList(MediaType.APPLICATION_JSON));
+        headers.set("Authorization", apiTokenConfig.getAuthorization());
+        return new HttpEntity<>("grant_type=client_credentials", headers);
     }
-
-    private static X509Certificate parseCertificate(String certPem) throws CertificateException {
-        String cleanPem = certPem.replaceAll("-----BEGIN CERTIFICATE-----", "")
-                                 .replaceAll("-----END CERTIFICATE-----", "")
-                                 .replaceAll("\\s+", "");
-        byte[] certBytes = Base64.getDecoder().decode(cleanPem);
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-        return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certBytes));
-    }
-
-    private static PrivateKey parsePrivateKey(String keyPem) throws Exception {
-        String cleanPem = keyPem.replaceAll("-----BEGIN (.*) PRIVATE KEY-----", "")
-                                .replaceAll("-----END (.*) PRIVATE KEY-----", "")
-                                .replaceAll("\\s+", "");
-        byte[] keyBytes = Base64.getDecoder().decode(cleanPem);
-        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        KeyFactory kf = KeyFactory.getInstance("RSA");
-        return kf.generatePrivate(keySpec);
-    }
-} 
+}
