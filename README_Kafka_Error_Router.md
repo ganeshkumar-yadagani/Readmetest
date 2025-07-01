@@ -55,6 +55,23 @@ Supporting Components:
 ```
 
 ---
+## 🧰 Tech Stack
+
+| Layer         | Technology                                                              |
+|---------------|-------------------------------------------------------------------------|
+| Core          | Java 11, Spring Boot                                                    |
+| Messaging     | Apache Kafka, Spring Kafka                                              |
+| Retry Engine  | Custom Consumer Logic (Time-based Routing)                             |
+| Config        | Spring Cloud Config, OAuth2 Token Auth, Azure Cert-Based Auth           |
+| Token Support | MSAL4J (Azure), Apigee Basic Token Auth                                 |
+| Security      | Spring Security RSA, OAuth2 Bearer Token                                |
+| JSON          | Jackson (`ObjectMapper`)                                                |
+| Custom Libs   | deep-common, deep-kafkaproducer-java                                    |
+| Monitoring    | Codahale Metrics, Spring Boot Actuator                                  |
+| Testing       | JUnit 5, Mockito                                                        |
+| Coverage      | JaCoCo (`0.35` complexity threshold enforced)                           |
+| Build Tool    | Maven                                                                   |
+| Repository    | GitLab Maven Registry                                                   |
 
 ## ⚙ Configuration
 
