@@ -1,6 +1,18 @@
 # Kafka Error Router
 
-A configurable, retry-aware Kafka consumer framework designed to route and process error events based on time thresholds. Supports delayed retry logic across multiple stages (15/30/60-minute processors) and secure configuration loading via token-based APIs.
+The Kafka Error Router is a fault-tolerant, time-aware message retry engine designed to handle transient and recoverable failures in event-driven architectures.
+
+Its core purpose is to:
+
+Consume failed events from Kafka topics
+
+Evaluate retry eligibility based on event age and retry policy
+
+Reprocess messages after a configured delay (e.g., 15, 30, or 60 minutes)
+
+Improve resilience and reliability of downstream systems by reducing message loss
+
+Securely fetch Kafka configurations at runtime via token-based API calls (OAuth2)
 
 ---
 
