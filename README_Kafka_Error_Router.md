@@ -186,8 +186,12 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.retry.backoff.FixedBackOffPolicy;
+import org.springframework.retry.policy.ExceptionClassifierRetryPolicy;
+import org.springframework.retry.policy.NeverRetryPolicy;
 import org.springframework.retry.policy.SimpleRetryPolicy;
 import org.springframework.retry.support.RetryTemplate;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
@@ -197,14 +201,14 @@ public class RestClientConfig {
 
     @Bean
     public RestTemplate restTemplate() {
-        // Timeout using Spring's built-in factory
+        // Timeout configuration
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(5000);
 
         RestTemplate restTemplate = new RestTemplate(factory);
 
-        // JSON + TEXT support
+        // Support JSON and plain text
         MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
         converter.setSupportedMediaTypes(List.of(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN));
         restTemplate.getMessageConverters().add(0, converter);
@@ -216,13 +220,29 @@ public class RestClientConfig {
     public RetryTemplate retryTemplate() {
         RetryTemplate retryTemplate = new RetryTemplate();
 
-        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy(3); // Retry 3 times
-        FixedBackOffPolicy backOff = new FixedBackOffPolicy();
-        backOff.setBackOffPeriod(1000); // 1s delay
+        // Retry on 5xx or network-related exceptions
+        ExceptionClassifierRetryPolicy policy = new ExceptionClassifierRetryPolicy();
+        SimpleRetryPolicy simpleRetry = new SimpleRetryPolicy(3); // 3 attempts
 
-        retryTemplate.setRetryPolicy(retryPolicy);
-        retryTemplate.setBackOffPolicy(backOff);
+        policy.setExceptionClassifier(throwable -> {
+            if (throwable instanceof ResourceAccessException) {
+                return simpleRetry;
+            }
+            if (throwable instanceof HttpStatusCodeException statusEx) {
+                if (statusEx.getStatusCode().is5xxServerError()) {
+                    return simpleRetry;
+                }
+                return new NeverRetryPolicy(); // no retry for 4xx
+            }
+            return new NeverRetryPolicy(); // default
+        });
 
+        // Fixed backoff (1s)
+        FixedBackOffPolicy backOffPolicy = new FixedBackOffPolicy();
+        backOffPolicy.setBackOffPeriod(1000);
+
+        retryTemplate.setRetryPolicy(policy);
+        retryTemplate.setBackOffPolicy(backOffPolicy);
         return retryTemplate;
     }
 }
