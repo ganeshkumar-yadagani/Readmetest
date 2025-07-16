@@ -1,20 +1,105 @@
-# Kafka Error Router
+import io.netty.channel.ChannelOption;
+import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.handler.timeout.WriteTimeoutHandler;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
+import reactor.netty.tcp.TcpClient;
 
-The Kafka Error Router is a fault-tolerant, time-aware message retry engine designed to handle transient and recoverable failures in event-driven architectures.
+import java.util.concurrent.TimeUnit;
 
-Its core purpose is to:
+@Configuration
+public class WebClientConfig {
 
-Consume failed events from Kafka topics
+    @Bean
+    public WebClient webClient() {
+        TcpClient tcpClient = TcpClient.create()
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+            .doOnConnected(conn ->
+                conn.addHandlerLast(new ReadTimeoutHandler(5, TimeUnit.SECONDS))
+                    .addHandlerLast(new WriteTimeoutHandler(5, TimeUnit.SECONDS)));
 
-Evaluate retry eligibility based on event age and retry policy
+        return WebClient.builder()
+                .clientConnector(new reactor.netty.http.client.HttpClientConnector(HttpClient.from(tcpClient)))
+                .build();
+    }
+}
 
-Reprocess messages after a configured delay (e.g., 15, 30, or 60 minutes)
 
-Improve resilience and reliability of downstream systems by reducing message loss
 
-Securely fetch Kafka configurations at runtime via token-based API calls (OAuth2)
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
----
+import java.time.Duration;
+
+@Service
+public class ExternalApiClient {
+
+    private static final Logger logger = LoggerFactory.getLogger(ExternalApiClient.class);
+    private final WebClient webClient;
+
+    public ExternalApiClient(WebClient webClient) {
+        this.webClient = webClient;
+    }
+
+    public Mono<String> callExternalApi(String url) {
+        return webClient.get()
+                .uri(url)
+                .retrieve()
+                .onStatus(HttpStatus::isError, clientResponse -> {
+                    logger.error("Received error status: {}", clientResponse.statusCode());
+                    return clientResponse.createException().flatMap(Mono::error);
+                })
+                .bodyToMono(String.class)
+                .retryWhen(Retry.backoff(3, Duration.ofSeconds(1))
+                        .maxBackoff(Duration.ofSeconds(5))
+                        .filter(ex -> {
+                            logger.warn("Retrying due to: {}", ex.getMessage());
+                            return ex instanceof WebClientResponseException;
+                        })
+                        .onRetryExhaustedThrow((retrySpec, signal) ->
+                                new RuntimeException("Retries exhausted: " + signal.failure().getMessage())))
+                .onErrorResume(ex -> {
+                    logger.error("All retries failed. Falling back: {}", ex.getMessage());
+                    return getFallbackResponse();
+                });
+    }
+
+    private Mono<String> getFallbackResponse() {
+        // You can call another service or return a default value here
+        return Mono.just("Fallback response: service temporarily unavailable");
+    }
+}
+
+
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
+
+@RestController
+@RequestMapping("/api")
+public class ApiController {
+
+    private final ExternalApiClient externalApiClient;
+
+    public ApiController(ExternalApiClient externalApiClient) {
+        this.externalApiClient = externalApiClient;
+    }
+
+    @GetMapping(value = "/data", produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<String> getData() {
+        String url = "https://jsonplaceholder.typicode.com/posts/1";
+        return externalApiClient.callExternalApi(url);
+    }
+}
+
 
 ## 🧭 Project Modules
 
