@@ -179,6 +179,54 @@ public class AppConfig {
         return retryTemplate;
     }
 }
+-------
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.retry.backoff.FixedBackOffPolicy;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.List;
+
+@Configuration
+public class RestClientConfig {
+
+    @Bean
+    public RestTemplate restTemplate() {
+        // Timeout using Spring's built-in factory
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(5000);
+
+        RestTemplate restTemplate = new RestTemplate(factory);
+
+        // JSON + TEXT support
+        MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
+        converter.setSupportedMediaTypes(List.of(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN));
+        restTemplate.getMessageConverters().add(0, converter);
+
+        return restTemplate;
+    }
+
+    @Bean
+    public RetryTemplate retryTemplate() {
+        RetryTemplate retryTemplate = new RetryTemplate();
+
+        SimpleRetryPolicy retryPolicy = new SimpleRetryPolicy(3); // Retry 3 times
+        FixedBackOffPolicy backOff = new FixedBackOffPolicy();
+        backOff.setBackOffPeriod(1000); // 1s delay
+
+        retryTemplate.setRetryPolicy(retryPolicy);
+        retryTemplate.setBackOffPolicy(backOff);
+
+        return retryTemplate;
+    }
+}
+
 
 ## 🧭 Project Modules
 
