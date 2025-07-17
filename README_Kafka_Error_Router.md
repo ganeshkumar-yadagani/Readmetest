@@ -1,3 +1,76 @@
+package com.tmobile.deep.config;
+
+import com.microsoft.aad.msal4j.MsalServiceException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.retry.RetryPolicy;
+import org.springframework.retry.policy.ExceptionClassifierRetryPolicy;
+import org.springframework.retry.policy.NeverRetryPolicy;
+import org.springframework.retry.policy.SimpleRetryPolicy;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Retry policy for Azure AD certificate-based token generation.
+ * Retries are allowed only when MsalServiceException indicates a 5xx error.
+ */
+public class AzureRetryPolicy extends ExceptionClassifierRetryPolicy {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AzureRetryPolicy.class);
+    private static final long serialVersionUID = 1L;
+
+    public AzureRetryPolicy(int maxAttempts) {
+        // Define which exceptions are retryable
+        Map<Class<? extends Throwable>, Boolean> retryableExceptions = new HashMap<>();
+        retryableExceptions.put(MsalServiceException.class, true); // explicitly allow MSAL exception
+
+        // Create base retry policy
+        SimpleRetryPolicy basePolicy = new SimpleRetryPolicy(maxAttempts, retryableExceptions);
+
+        // Delegate retry classification to our custom logic
+        this.setExceptionClassifier(classifiable -> getRetryPolicy(basePolicy, classifiable));
+    }
+
+    /**
+     * Determine whether to retry based on unwrapped exception and MSAL status code.
+     */
+    private RetryPolicy getRetryPolicy(SimpleRetryPolicy basePolicy, Throwable throwable) {
+        Throwable root = unwrap(throwable);
+
+        LOGGER.warn("🛠 AzureRetryPolicy evaluating exception: {}", root.getClass().getName());
+
+        if (root instanceof MsalServiceException) {
+            MsalServiceException ex = (MsalServiceException) root;
+            LOGGER.warn("🌐 MSAL errorCode={}, statusCode={}", ex.errorCode(), ex.statusCode());
+
+            int statusCode = ex.statusCode();
+            if (statusCode >= 500 && statusCode < 600) {
+                LOGGER.info("✅ Retrying due to 5xx status code: {}", statusCode);
+                return basePolicy;
+            } else {
+                LOGGER.info("🚫 Not retrying: status code = {}", statusCode);
+            }
+        } else {
+            LOGGER.info("🚫 Not retrying: exception is not MsalServiceException");
+        }
+
+        return new NeverRetryPolicy();
+    }
+
+    /**
+     * Unwraps nested exceptions (e.g., ExecutionException, CompletionException).
+     */
+    private Throwable unwrap(Throwable t) {
+        while (t.getCause() != null && t != t.getCause()) {
+            t = t.getCause();
+        }
+        return t;
+    }
+}
+
+
+
 @Bean
 public RetryTemplate retryTemplate() {
     RetryTemplate template = new RetryTemplate();
