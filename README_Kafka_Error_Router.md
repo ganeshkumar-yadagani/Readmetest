@@ -1,3 +1,39 @@
+@Bean
+public RetryTemplate retryTemplate() {
+    RetryTemplate template = new RetryTemplate();
+
+    FixedBackOffPolicy backOff = new FixedBackOffPolicy();
+    backOff.setBackOffPeriod(1000); // 1 second
+
+    RetryPolicy retryPolicy = new RetryPolicy() {
+        @Override
+        public boolean canRetry(RetryContext context) {
+            Throwable cause = unwrap(context.getLastThrowable());
+            if (cause instanceof MsalServiceException) {
+                int statusCode = ((MsalServiceException) cause).statusCode();
+                return statusCode >= 500 && statusCode < 600;
+            }
+            return false;
+        }
+
+        private Throwable unwrap(Throwable t) {
+            while (t.getCause() != null && t != t.getCause()) {
+                t = t.getCause();
+            }
+            return t;
+        }
+
+        @Override public void close(RetryContext context) {}
+        @Override public void registerThrowable(RetryContext context, Throwable throwable) {}
+        @Override public RetryContext open(RetryContext parent) { return new DefaultRetryContext(); }
+    };
+
+    template.setBackOffPolicy(backOff);
+    template.setRetryPolicy(retryPolicy);
+    return template;
+}
+
+
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
