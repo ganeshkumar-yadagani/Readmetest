@@ -1,3 +1,109 @@
+import com.tmob.deep.config.RabbitMQConfiguration;
+import com.tmob.deep.integration.RulesConfigIntegration;
+import com.tmob.deep.utils.MessagePropertiesInjector;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.retry.RetryCallback;
+import org.springframework.retry.RetryContext;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(SpringExtension.class)
+public class RabbitMQConfigurationTest {
+
+    @InjectMocks
+    private RabbitMQConfiguration rabbitMQConfiguration;
+
+    @Mock
+    private MessagePropertiesInjector messagePropertiesInjector;
+
+    @Mock
+    private RulesConfigIntegration rulesConfig;
+
+    @Mock
+    private RetryTemplate azureRetryTemplate;
+
+    private static final String HOST = "10.5.204.41";
+    private static final String VIRTUAL_HOST = "SND";
+    private static final int PORT = 5672;
+    private static final String RETRY_ROUTE_KEY = "retryRouteKey";
+    private static final String CONFIRMATION_RESUBMISSION_ROUTE_KEY = "confirmationResubmissionRouteKey";
+
+    @BeforeEach
+    public void setup() throws Exception {
+        MockitoAnnotations.openMocks(this);
+
+        // Mock RulesConfigIntegration
+        when(rulesConfig.getCurrentEnvId()).thenReturn(1L);
+        when(rulesConfig.getBaseUrl(1L)).thenReturn("http://localhost:8080");
+
+        // Inject private fields
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "host", HOST);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "virtualHost", VIRTUAL_HOST);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "port", PORT);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "retryRouteKey", RETRY_ROUTE_KEY);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "confirmationResubmissionRouteKey", CONFIRMATION_RESUBMISSION_ROUTE_KEY);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "rulesConfig", rulesConfig);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "azureRetryTemplate", azureRetryTemplate);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "messagePropertiesInjector", messagePropertiesInjector);
+
+        // Stub retryTemplate.execute
+        when(azureRetryTemplate.execute(any(RetryCallback.class)))
+                .thenReturn(null); // token will be null; this avoids real MSAL token logic
+    }
+
+    @Test
+    public void testConnectionFactory() {
+        ConnectionFactory factory = rabbitMQConfiguration.connectionFactory();
+        assertNotNull(factory);
+    }
+
+    @Test
+    public void testGetObjectMapper() {
+        assertNotNull(rabbitMQConfiguration.getObjectMapper());
+    }
+
+    @Test
+    public void testGetMessageConverter() {
+        assertNotNull(rabbitMQConfiguration.getMessageConverter());
+    }
+
+    @Test
+    public void testGetRetryRouteKey() {
+        assertEquals(RETRY_ROUTE_KEY, rabbitMQConfiguration.getRetryRouteKey());
+    }
+
+    @Test
+    public void testGetConfirmationResubmissionRouteKey() {
+        assertEquals(CONFIRMATION_RESUBMISSION_ROUTE_KEY, rabbitMQConfiguration.getConfirmationResubmissionRouteKey());
+    }
+
+    @Test
+    public void testRabbitTemplateResubmitIncomingEventQueue() {
+        RabbitTemplate template = rabbitMQConfiguration.rabbitTemplateResubmitIncomingEventQueue();
+        assertNotNull(template);
+    }
+
+    @Test
+    public void testRabbitTemplateConfirmationResubmissionIncomingEventQueue() {
+        RabbitTemplate template = rabbitMQConfiguration.rabbitTemplateConfirmationResubmitIncomingEventQueue();
+        assertNotNull(template);
+    }
+}
+
+
+
 package com.tmobile.deep.config;
 
 import com.microsoft.aad.msal4j.MsalServiceException;
