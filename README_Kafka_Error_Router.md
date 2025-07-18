@@ -1,3 +1,124 @@
+import com.tmobile.deep.config.RabbitMQConfiguration;
+import com.tmobile.deep.integration.RulesConfigIntegration;
+import com.tmobile.deep.utils.MessagePropertiesInjector;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.retry.RetryCallback;
+import org.springframework.retry.RetryContext;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.io.IOException;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(SpringExtension.class)
+public class RabbitMQConfigurationTest {
+
+    @InjectMocks
+    private RabbitMQConfiguration rabbitMQConfiguration;
+
+    @Mock
+    private MessagePropertiesInjector messagePropertiesInjector;
+
+    @Mock
+    private RulesConfigIntegration rulesConfig;
+
+    @Mock
+    private RetryTemplate azureRetryTemplate;
+
+    private static final String ENV_JSON = "{\"envName\":\"sandbox\",\"id\":10}";
+    private static final String CLUSTER_JSON = "{\"bindingKey\":\"545\",\"cluster\":\"default\",\"type\":\"DEFAULT\",\"host\":\"10.5.204.41\",\"port\":\"5672\",\"virtualHost\":\"SND\",\"producerUserName\":\"deep3appsvod\",\"producerPassword\":\"deep3password\",\"consumerUserName\":\"Restricted\",\"publishEventName\":\"DEEPProductionEventsAndRules\",\"env\":7}";
+    private static final String CLUSTER_JSON_SANDBOX = "{\"envName\":\"sandbox\"}";
+    private static final String HOST = "10.5.204.41";
+    private static final int PORT = 5672;
+    private static final String VIRTUAL_HOST = "SND";
+    private static final String RETRY_ROUTE_KEY = "retryRouteKey";
+    private static final String CONFIRMATION_RESUBMISSION_ROUTE_KEY = "confirmationResubmissionRouteKey";
+    private static final String RETRY_CONSUMER_NAME = "deeptransactionreplay_deep";
+
+    @BeforeEach
+    void init() throws IOException {
+        when(rulesConfig.getCurrentEnvId()).thenReturn(1L);
+        when(rulesConfig.getBaseUrl(1L)).thenReturn("http://localhost:8080");
+
+        when(rulesConfig.exchange(any(), any(), any(), any()))
+                .thenReturn(new ResponseEntity<>(ENV_JSON, HttpStatus.OK))
+                .thenReturn(new ResponseEntity<>(CLUSTER_JSON_SANDBOX, HttpStatus.OK))
+                .thenReturn(new ResponseEntity<>(CLUSTER_JSON, HttpStatus.OK));
+
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "retryRouteKey", RETRY_ROUTE_KEY);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "confirmationResubmissionRouteKey", CONFIRMATION_RESUBMISSION_ROUTE_KEY);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "retryConsumerName", RETRY_CONSUMER_NAME);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "rulesConfig", rulesConfig);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "messagePropertiesInjector", messagePropertiesInjector);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "rabbitMQCertAuthEnabled", false);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "rabbitMQAuthEnabled", false);
+        ReflectionTestUtils.setField(rabbitMQConfiguration, "azureRetryTemplate", azureRetryTemplate);
+
+        // prevent retry logic from triggering NPE
+        when(azureRetryTemplate.execute(any(RetryCallback.class))).thenReturn(null);
+    }
+
+    @Test
+    void test() throws IOException {
+        String virtualHost = (String) ReflectionTestUtils.getField(rabbitMQConfiguration, "virtualHost");
+        String host = (String) ReflectionTestUtils.getField(rabbitMQConfiguration, "host");
+        int port = (int) ReflectionTestUtils.getField(rabbitMQConfiguration, "port");
+
+        assertEquals(VIRTUAL_HOST, virtualHost);
+        assertEquals(HOST, host);
+        assertEquals(PORT, port);
+    }
+
+    @Test
+    void rabbitTemplateResubmitIncomingEventQueue() {
+        assertNotNull(rabbitMQConfiguration.rabbitTemplateResubmitIncomingEventQueue());
+    }
+
+    @Test
+    void rabbitTemplateConfirmationResubmitIncomingEventsQueue() {
+        assertNotNull(rabbitMQConfiguration.rabbitTemplateConfirmationResubmitIncomingEventQueue());
+    }
+
+    @Test
+    void connectionFactory() {
+        assertNotNull(rabbitMQConfiguration.connectionFactory());
+    }
+
+    @Test
+    void getObjectMapper() {
+        assertNotNull(rabbitMQConfiguration.getObjectMapper());
+    }
+
+    @Test
+    void getMessageConverter() {
+        assertNotNull(rabbitMQConfiguration.getMessageConverter());
+    }
+
+    @Test
+    void getRetryRouteKey() {
+        assertEquals(RETRY_ROUTE_KEY, rabbitMQConfiguration.getRetryRouteKey());
+    }
+
+    @Test
+    void getConfirmationResubmissionRouteKey() {
+        assertEquals(CONFIRMATION_RESUBMISSION_ROUTE_KEY, rabbitMQConfiguration.getConfirmationResubmissionRouteKey());
+    }
+}
+
+
+
+
 import com.tmob.deep.config.RabbitMQConfiguration;
 import com.tmob.deep.integration.RulesConfigIntegration;
 import com.tmob.deep.utils.MessagePropertiesInjector;
