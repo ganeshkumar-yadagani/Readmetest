@@ -1,5 +1,103 @@
 package com.tmobile.deep;
 
+import com.azure.core.credential.AccessToken;
+import com.azure.core.credential.TokenCredential;
+import com.azure.core.credential.TokenRequestContext;
+import com.microsoft.aad.msal4j.*;
+
+import com.tmobile.deep.exceptions.DEEPException;
+import com.tmobile.deep.util.MsalUtils;
+
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
+import java.time.OffsetDateTime;
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.locks.ReentrantLock;
+
+public enum TokenProvider implements TokenCredential {
+    INSTANCE;
+
+    private final String tenantId = (String) HandlerConfigProperties.INSTANCE
+        .getPropertyValue(HandlerConfigProperties.DEEP_CONSUMER_AZURE_TENANT_ID);
+
+    private final String clientId = HandlerConfigProperties.INSTANCE
+        .getUserProvidedRMQCredential().getAzureAppId();
+
+    private final String clientSecret = HandlerConfigProperties.INSTANCE
+        .getUserProvidedRMQCredential().getAzureSecret();
+
+    private final String publicCert = HandlerConfigProperties.INSTANCE
+        .getUserProvidedRMQCredential().getPublicCert();
+
+    private final String privateKey = HandlerConfigProperties.INSTANCE
+        .getUserProvidedRMQCredential().getPrivateKey();
+
+    private final boolean useCertAuth = HandlerConfigProperties.INSTANCE.isCertBasedAuthEnabled();
+
+    // Cached token and expiration
+    private volatile AccessToken cachedToken;
+    private final ReentrantLock lock = new ReentrantLock();
+
+    @Override
+    public CompletableFuture<AccessToken> getToken(TokenRequestContext requestContext) {
+        try {
+            if (cachedToken != null && !isTokenExpired(cachedToken)) {
+                return CompletableFuture.completedFuture(cachedToken);
+            }
+
+            lock.lock();
+            try {
+                if (cachedToken != null && !isTokenExpired(cachedToken)) {
+                    return CompletableFuture.completedFuture(cachedToken);
+                }
+
+                Set<String> scopes = requestContext.getScopes() == null || requestContext.getScopes().isEmpty()
+                    ? Collections.singleton("https://storage.azure.com/.default")
+                    : requestContext.getScopes();
+
+                IConfidentialClientApplication clientApp;
+                if (useCertAuth) {
+                    PrivateKey key = MsalUtils.getPrivateKey(privateKey);
+                    X509Certificate cert = MsalUtils.getX509Certificate(publicCert);
+                    IClientCredential credential = ClientCredentialFactory.createFromCertificate(key, cert);
+                    clientApp = ConfidentialClientApplication.builder(clientId, credential)
+                        .authority("https://login.microsoftonline.com/" + tenantId)
+                        .build();
+                } else {
+                    IClientCredential credential = ClientCredentialFactory.createFromSecret(clientSecret);
+                    clientApp = ConfidentialClientApplication.builder(clientId, credential)
+                        .authority("https://login.microsoftonline.com/" + tenantId)
+                        .build();
+                }
+
+                ClientCredentialParameters params = ClientCredentialParameters.builder(scopes).build();
+                IAuthenticationResult result = clientApp.acquireToken(params).get();
+
+                cachedToken = new AccessToken(
+                    result.accessToken(),
+                    OffsetDateTime.ofInstant(result.expiresOnDate().toInstant(), OffsetDateTime.now().getOffset())
+                );
+
+                return CompletableFuture.completedFuture(cachedToken);
+            } finally {
+                lock.unlock();
+            }
+        } catch (Exception e) {
+            return CompletableFuture.failedFuture(new DEEPException("Failed to acquire token", e));
+        }
+    }
+
+    private boolean isTokenExpired(AccessToken token) {
+        return token.getExpiresAt().minusMinutes(5).isBefore(OffsetDateTime.now());
+    }
+}
+
+
+
+package com.tmobile.deep;
+
 import com.tmobile.deep.util.TokenGeneratorUtil;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
