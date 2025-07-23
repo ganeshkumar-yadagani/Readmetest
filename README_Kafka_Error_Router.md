@@ -1,3 +1,34 @@
+package com.tmobile.deep;
+
+import com.tmobile.deep.util.TokenGeneratorUtil;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+
+@Component
+public class TokenPrintScheduler {
+
+    private final TokenGeneratorUtil tokenGeneratorUtil;
+
+    public TokenPrintScheduler(TokenGeneratorUtil tokenGeneratorUtil) {
+        this.tokenGeneratorUtil = tokenGeneratorUtil;
+    }
+
+    @Scheduled(fixedRate = 60000) // Runs every 60 seconds
+    public void printTokenStatus() {
+        String token = tokenGeneratorUtil.getAccessToken();
+        OffsetDateTime expiry = tokenGeneratorUtil.getTokenExpiryTime(); // must be added if not present
+
+        System.out.println("[" + OffsetDateTime.now(ZoneOffset.UTC) + "] Access Token: " + token);
+        System.out.println("Token Expiry Time (UTC): " + expiry);
+        System.out.println("Token Hash: " + token.hashCode());
+        System.out.println("--------------------------------------------------");
+    }
+}
+
+
 import com.tmobile.deep.config.RabbitMQConfiguration;
 import com.tmobile.deep.integration.RulesConfigIntegration;
 import com.tmobile.deep.utils.MessagePropertiesInjector;
