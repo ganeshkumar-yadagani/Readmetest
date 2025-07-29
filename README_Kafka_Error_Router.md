@@ -1,3 +1,50 @@
+import java.security.*;
+import java.security.spec.*;
+import javax.crypto.Cipher;
+import java.util.Base64;
+
+public class RSATest {
+
+    public static void main(String[] args) {
+        // Base64-encoded public and private keys (X.509 and PKCS#8 format respectively)
+        String base64PublicKey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq...";   // replace with full key
+        String base64PrivateKey = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ..."; // replace with full key
+
+        String originalText = "Hello from iKapture!";
+
+        try {
+            // ===== Convert Base64-encoded public key to PublicKey =====
+            byte[] publicBytes = Base64.getDecoder().decode(base64PublicKey);
+            X509EncodedKeySpec pubKeySpec = new X509EncodedKeySpec(publicBytes);
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            PublicKey publicKey = keyFactory.generatePublic(pubKeySpec);
+
+            // ===== Convert Base64-encoded private key to PrivateKey =====
+            byte[] privateBytes = Base64.getDecoder().decode(base64PrivateKey);
+            PKCS8EncodedKeySpec privKeySpec = new PKCS8EncodedKeySpec(privateBytes);
+            PrivateKey privateKey = keyFactory.generatePrivate(privKeySpec);
+
+            // ===== Encrypt the message using public key =====
+            Cipher encryptCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+            encryptCipher.init(Cipher.ENCRYPT_MODE, publicKey);
+            byte[] encryptedBytes = encryptCipher.doFinal(originalText.getBytes());
+            String encryptedText = Base64.getEncoder().encodeToString(encryptedBytes);
+            System.out.println("Encrypted Text:\n" + encryptedText);
+
+            // ===== Decrypt the message using private key =====
+            Cipher decryptCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+            decryptCipher.init(Cipher.DECRYPT_MODE, privateKey);
+            byte[] decryptedBytes = decryptCipher.doFinal(Base64.getDecoder().decode(encryptedText));
+            String decryptedText = new String(decryptedBytes);
+            System.out.println("Decrypted Text:\n" + decryptedText);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
 package com.tmobile.deep;
 
 import com.azure.core.credential.AccessToken;
