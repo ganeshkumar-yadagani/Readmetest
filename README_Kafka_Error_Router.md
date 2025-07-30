@@ -1,4 +1,34 @@
 import java.security.*;
+import java.util.Base64;
+import java.util.Map;
+
+public class RSATestMain {
+    public static void main(String[] args) {
+        try {
+            // 1. Generate key pair
+            RSAUtil util = RSAUtil.INSTANCE;
+            Map<String, String> keyPair = util.generateRandomKeyPair("", "");
+
+            String base64PrivateKey = keyPair.get("privateKey");
+            String base64PublicKey = keyPair.get("publicKey");
+
+            // 2. Encrypt with Private Key
+            String message = "Ganesh is verifying with public key!";
+            String encrypted = util.encrypt(message, base64PrivateKey);
+            System.out.println("Encrypted (with private key):\n" + encrypted);
+
+            // 3. Decrypt with Public Key
+            String decrypted = util.decrypt(encrypted, base64PublicKey);
+            System.out.println("Decrypted (with public key):\n" + decrypted);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+import java.security.*;
 import java.security.spec.*;
 import javax.crypto.Cipher;
 import java.util.Base64;
