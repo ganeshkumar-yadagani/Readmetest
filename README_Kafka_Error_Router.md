@@ -1,4 +1,35 @@
 /**
+ * Adds additional configuration properties to the handler at runtime.
+ *
+ * <p>This method allows you to override or inject advanced, optional,
+ * or feature-flag-based properties such as canary toggles, throttling settings,
+ * custom retry configurations, or metadata flags that influence runtime behavior.</p>
+ *
+ * <p>These properties are added into the {@link HandlerConfigProperties} registry
+ * and are accessible throughout the lifecycle of the message handler.</p>
+ *
+ * <p><b>Example:</b></p>
+ * <pre>{@code
+ * Map<String, Object> props = new HashMap<>();
+ * props.put(HandlerConfigProperties.DEEP_CONSUMER_CANARY_TEST_ENABLED, true);
+ * props.put(HandlerConfigProperties.DEEP_CONSUMER_CANARY_TEST_MESSAGE_COUNT, 10);
+ * builder.withConfigProperties(props);
+ * }</pre>
+ *
+ * @param props a map of string keys to arbitrary property values
+ * @return the updated {@link MessageHandlerBuilder} instance
+ *
+ * @see HandlerConfigProperties#setProperties(Map)
+ * @see MessageHandlerBuilder#build()
+ * @see HandlerConfigProperties#DEEP_CONSUMER_CANARY_TEST_ENABLED
+ * @see HandlerConfigProperties#DEEP_CONSUMER_CANARY_TEST_MESSAGE_COUNT
+ */
+public MessageHandlerBuilder withConfigProperties(Map<String, Object> props) {
+    HandlerConfigProperties.INSTANCE.setProperties(props);
+    return this;
+}
+
+/**
  * Sets the business logic processor used for handling the consumed messages.
  *
  * <p>This is a required configuration. The provided {@link DeepProcessor} implementation
