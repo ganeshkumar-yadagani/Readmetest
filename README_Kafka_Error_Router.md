@@ -1,151 +1,91 @@
 /**
- * Sets the unique consumer name used to identify the message handler.
+ * Sets the business logic processor used for handling the consumed messages.
  *
- * <p>This name is typically used to load handler-specific rules and configurations.
- * It should match the name registered in the rule engine or backend config system.</p>
+ * <p>This is a required configuration. The provided {@link DeepProcessor} implementation
+ * defines how the incoming messages are parsed, validated, and processed.</p>
  *
- * @param consumerName the name of the message consumer (e.g., "invoice-handler")
+ * @param deepProcessor an implementation of {@link DeepProcessor}
  * @return the updated {@link MessageHandlerBuilder} instance
  *
- * @see #withEnv(String)
- * @see HandlerConfigProperties#setConsumerName(String)
+ * @see HandlerConfigProperties#setDeepProcessor(DeepProcessor)
  */
-public MessageHandlerBuilder withConsumerName(final String consumerName) {
-    ...
-}
-
-/**
- * Sets the Kafka consumer group ID for the handler.
- *
- * <p>Use this only when working with Kafka-based consumers.
- * It will be used in Kafka subscription setup and offset tracking.</p>
- *
- * @param consumerGroup the Kafka consumer group ID
- * @return the updated {@link MessageHandlerBuilder} instance
- *
- * @see HandlerConfigProperties#setConsumerGroup(String)
- */
-public MessageHandlerBuilder withConsumerGroup(final String consumerGroup) {
-    ...
-}
-
-/**
- * Specifies the environment context (e.g., "dev", "test", "prod") for the handler.
- *
- * <p>This helps in resolving environment-specific configurations such as
- * rule endpoints, tokens, and authentication.</p>
- *
- * @param env the environment name (e.g., "dev", "prod")
- * @return the updated {@link MessageHandlerBuilder} instance
- *
- * @see #withRulesURI(String)
- * @see HandlerConfigProperties#setEnv(String)
- */
-public MessageHandlerBuilder withEnv(final String env) {
-    ...
-}
-
-/**
- * Sets the URI endpoint used to fetch dynamic rules for this handler.
- *
- * <p>This endpoint typically points to a REST API that provides message processing
- * rules, retry logic, and route information based on the consumer and environment.</p>
- *
- * @param rulesURI the full URI of the rule engine endpoint
- * @return the updated {@link MessageHandlerBuilder} instance
- * @throws Exception if validation or formatting of the URI fails
- *
- * @see HandlerConfigProperties#setRulesURI(String)
- */
-public MessageHandlerBuilder withRulesURI(final String rulesURI) throws Exception {
-    ...
-}
-
-/**
- * Sets the OAuth2 access token used for calling protected APIs like rule config fetch.
- *
- * <p>This token is required when your backend is secured via OAuth2 and expects
- * an Authorization header for API calls.</p>
- *
- * @param authToken the access token (usually a Bearer token)
- * @return the updated {@link MessageHandlerBuilder} instance
- *
- * @see #withIdToken(String)
- * @see HandlerConfigProperties#setAuthToken(String)
- */
-public MessageHandlerBuilder withAuthToken(String authToken) {
-    ...
-}
-
-/**
- * Sets the ID token (typically a JWT) used for audit headers or logging identity.
- *
- * <p>This is different from the access token and often used for client-side logging,
- * tracking user sessions, or sending additional metadata in requests.</p>
- *
- * @param idToken the ID token (JWT string)
- * @return the updated {@link MessageHandlerBuilder} instance
- *
- * @see #withAuthToken(String)
- * @see HandlerConfigProperties#setIdToken(String)
- */
-public MessageHandlerBuilder withIdToken(String idToken) {
+public MessageHandlerBuilder withDeepProcessor(final DeepProcessor deepProcessor) {
     ...
 }
 /**
- * Sets the token generator utility used to generate OAuth2 access tokens.
+ * Specifies the base file path for downloading large event payloads from Azure Blob Storage.
  *
- * <p>This generator is responsible for obtaining and caching tokens required
- * for accessing protected endpoints like rule APIs, Azure Blob, or RabbitMQ.</p>
+ * <p>This is used internally by the large file transfer logic to construct the full blob URI.
+ * If not set, a default path (like "/") may be used.</p>
  *
- * @param tokenGenerator an instance of {@link TokenGenerator} implementation
+ * @param largeFilePath the base path to use for Azure file downloads (e.g., "/", "/blob/base/")
  * @return the updated {@link MessageHandlerBuilder} instance
  *
- * @see HandlerConfigProperties#setTokengenerator(TokenGenerator)
+ * @see HandlerConfigProperties#setLargeFilePath(String)
  */
-public MessageHandlerBuilder withTokenGenerator(TokenGenerator tokenGenerator) {
+public MessageHandlerBuilder withLargeFilePath(final String largeFilePath) {
     ...
 }
 /**
- * Sets the custom SSL context to be used for secure HTTP connections.
+ * Sets the logical configuration region for the cluster (RabbitMQ or Kafka).
  *
- * <p>This can be used to configure a custom trust store or certificate for
- * calling external APIs like rule engine or secure RabbitMQ endpoints.</p>
+ * <p>This is useful for region-specific configuration overrides, routing rules,
+ * or when operating in a multi-region cloud deployment.</p>
  *
- * @param sslContext the {@link SSLContext} object with custom configuration
+ * @param clusterConfigRegion the name of the config region (e.g., "us-east", "prod-eu-central")
  * @return the updated {@link MessageHandlerBuilder} instance
  *
- * @see HandlerConfigProperties#setSslContext(SSLContext)
+ * @throws Exception if validation or region resolution fails
+ *
+ * @see HandlerConfigProperties#setClusterConfigRegion(String)
  */
-public MessageHandlerBuilder withSSLContext(SSLContext sslContext) {
+public MessageHandlerBuilder withClusterConfigRegion(final String clusterConfigRegion) throws Exception {
     ...
 }
 /**
- * Sets the Kafka cluster group name.
+ * Fetches and initializes the handler configuration from the external handler rules API.
  *
- * <p>This is typically used when multiple logical Kafka clusters are managed
- * and each group represents a unique configuration or environment context.</p>
+ * <p>This method performs the following:
+ * <ul>
+ *   <li>Validates required properties (like consumer name, environment, etc.)</li>
+ *   <li>Calls the rule API to fetch dynamic handler configuration</li>
+ *   <li>Populates {@link HandlerConfigProperties} with the retrieved config</li>
+ * </ul>
  *
- * @param clusterGroup the name of the cluster group (e.g., "bravo", "alpha")
+ * This must be called before {@code build()} to ensure the consumer is correctly configured.
+ *
  * @return the updated {@link MessageHandlerBuilder} instance
+ * @throws DEEPException if any error occurs during config fetch or header property setup
  *
- * @see HandlerConfigProperties#setClusterGroup(String)
+ * @see HandlerRulesService#getHandlerConfig()
+ * @see HandlerConfigUtil#setHandlerHeaderProperties()
  */
-public MessageHandlerBuilder withClusterGroup(String clusterGroup) {
+public MessageHandlerBuilder fetchHandlerConfig() throws DEEPException {
     ...
 }
 /**
- * Sets the target region for RabbitMQ or Kafka cluster routing.
+ * Finalizes and builds the configured {@link MessageHandler} instances.
  *
- * <p>This is useful in multi-region deployments where configuration or queue
- * setup is region-specific (e.g., "us-east", "eu-west").</p>
+ * <p>This method performs the following operations:</p>
+ * <ul>
+ *   <li>Validates that the handler was not already built</li>
+ *   <li>Merges all configuration properties using {@link HandlerConfigProperties#finalizeConfig()}</li>
+ *   <li>Creates RabbitMQ entities (e.g., Shovels) if Rabbit mode and listener creation are enabled</li>
+ *   <li>Builds and sends a POST request to the `/deepio/v2/consumer/handler/entities/clusterconfig` endpoint</li>
+ *   <li>Injects token-based or header-based authentication if configured</li>
+ *   <li>Returns the map of {@code MessageHandler} instances by their cluster ID</li>
+ * </ul>
  *
- * @param clusterRegion the cluster region identifier
- * @return the updated {@link MessageHandlerBuilder} instance
+ * <p>This should be the final step in the builder chain, called after all configuration
+ * methods like {@code withCredential()}, {@code withEnv()}, {@code fetchHandlerConfig()}, etc.</p>
  *
- * @see HandlerConfigProperties#setClusterRegion(String)
+ * @return a map of {@code MessageHandler} instances grouped by cluster ID
+ * @throws Exception if any configuration, HTTP connection, or token-related step fails
+ *
+ * @see HandlerConfigProperties#finalizeConfig()
+ * @see HandlerConfigUtil#setHandlerHeaderProperties()
+ * @see TokenGenerator#getToken()
  */
-public MessageHandlerBuilder withClusterRegion(String clusterRegion) {
+public synchronized Map<Integer, MessageHandler> build() throws Exception {
     ...
 }
-
