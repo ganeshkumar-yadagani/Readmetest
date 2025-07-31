@@ -1,24 +1,25 @@
 /**
- * Configures RabbitMQ authentication using the specified credential method.
+ * Configures Azure Blob Storage large file access credentials for downloading event payloads.
  *
- * <p>This method supports the following authentication types:</p>
+ * <p>This method supports the following authentication types for accessing large payloads stored in Azure Blob:</p>
  * <ul>
- *   <li><b>Username/Password:</b> Provide non-null <code>clientId</code> and <code>secret</code>.</li>
- *   <li><b>OAuth2 Secret-based:</b> Provide <code>clientId</code> and <code>secret</code> (client credentials flow).</li>
- *   <li><b>Certificate-based OAuth2:</b> Provide <code>clientId</code>, <code>privateKey</code>, and <code>publicCert</code>.</li>
+ *   <li><b>Client Secret-based Authentication:</b> Provide <code>clientId</code> and <code>secret</code> (Azure AD client credentials).</li>
+ *   <li><b>Certificate-based Authentication:</b> Provide <code>clientId</code>, <code>privateKey</code> (as <code>secret</code>), and <code>publicCert</code>.</li>
  * </ul>
  *
- * <p>Note: Only one `withCredential(...)` method call is supported per builder instance.</p>
+ * <p>These credentials will be used by the message handler platform to generate OAuth2 tokens for downloading large event data files from Azure Blob Storage.</p>
  *
- * @param clientId   the client ID or username depending on the auth type
- * @param secret     the client secret or password (for cert-based, this is the private key PEM)
- * @param publicCert the public certificate PEM string (used only in cert-based auth)
+ * <p>Note: Only one <code>withLargeCredential(...)</code> call should be used per handler configuration.</p>
+ *
+ * @param clientId   Azure AD application (client) ID
+ * @param secret     Client secret or private key (PEM string for cert-based auth)
+ * @param publicCert Public certificate (PEM string), required for certificate-based auth
  * @return the updated {@link MessageHandlerBuilder} instance
  *
- * @see #withLargeCredential(String, String, String)
- * @see HandlerConfigProperties#setUserProvidedRMQCredential(String, String, String)
+ * @see #withCredential(String, String, String)
+ * @see HandlerConfigProperties#setUserProvidedLargeFileCredential(String, String, String)
  */
-public MessageHandlerBuilder withCredential(String clientId, String secret, String publicCert) {
-    HandlerConfigProperties.INSTANCE.setUserProvidedRMQCredential(clientId, secret, publicCert);
+public MessageHandlerBuilder withLargeCredential(String clientId, String secret, String publicCert) {
+    HandlerConfigProperties.INSTANCE.setUserProvidedLargeFileCredential(clientId, secret, publicCert);
     return this;
 }
