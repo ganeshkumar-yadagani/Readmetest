@@ -1,4 +1,54 @@
 /**
+ * MessageHandlerBuilder is the central entry point for configuring and initializing
+ * message consumers for both RabbitMQ and Kafka within the Deep Messaging Platform.
+ *
+ * <p>This builder supports a fluent API for chaining various configuration methods such as:
+ * <ul>
+ *   <li>Setting consumer name, environment, and rules URI</li>
+ *   <li>Defining credentials for RabbitMQ (basic, secret, cert-based)</li>
+ *   <li>Specifying Azure Blob credentials for large file downloads</li>
+ *   <li>Injecting custom processors, token generators, and SSL contexts</li>
+ *   <li>Overriding dynamic configuration properties</li>
+ *   <li>Fetching remote handler configuration and finalizing setup</li>
+ * </ul>
+ *
+ * <p>The builder is implemented as a singleton {@code enum INSTANCE} and maintains
+ * internal state such as {@code messageHandlers}, token headers, and synchronization
+ * primitives to support safe concurrent initialization and suspension/resume operations.</p>
+ *
+ * <p><b>Usage Example:</b></p>
+ * <pre>{@code
+ * MessageHandlerBuilder.INSTANCE
+ *     .withConsumerName("invoice-processor")
+ *     .withEnv("prod")
+ *     .withRulesURI("https://config.service/deepio/v2/...")
+ *     .withCredential(clientId, clientSecret, "")
+ *     .withLargeCredential(azureAppId, azureSecret, "")
+ *     .withTokenGenerator(tokenGeneratorUtil)
+ *     .withAuthToken(token.getAccessToken())
+ *     .withIdToken(token.getIdToken())
+ *     .withDeepProcessor(customProcessor)
+ *     .withConfigProperties(extraProps)
+ *     .fetchHandlerConfig()
+ *     .build();
+ * }</pre>
+ *
+ * <p>This class supports both RabbitMQ and Kafka consumers,
+ * and manages cluster routing, auto-scaling control, and header propagation.</p>
+ *
+ * @author
+ * @see HandlerConfigProperties
+ * @see MessageHandler
+ * @see TokenGenerator
+ * @see DeepProcessor
+ */
+public enum MessageHandlerBuilder {
+    INSTANCE;
+
+    // internal fields...
+}
+
+/**
  * Adds additional configuration properties to the handler at runtime.
  *
  * <p>This method allows you to override or inject advanced, optional,
