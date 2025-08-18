@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 import javax.persistence.EntityManager;
 import javax.persistence.PersistenceContext;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class LargeFileConfigServiceV4Impl implements LargeFileConfigServiceV4 {
@@ -36,97 +35,108 @@ public class LargeFileConfigServiceV4Impl implements LargeFileConfigServiceV4 {
         Map<EntityType, List<DeepDefaultConfigDTO>> defaultConfigAll =
                 defaultConfigService.findByEntityTypesAndEnv(env, entityTypes, null);
 
-        List<DeepDefaultConfigDTO> defaultApplicationProps = defaultConfigAll.get(EntityType.APPLICATION);
-        List<DeepDefaultConfigDTO> defaultEventProps = defaultConfigAll.get(EntityType.EVENT);
-        List<DeepDefaultConfigDTO> defaultPublisherProps = defaultConfigAll.get(EntityType.PUBLISHER);
+        List<DeepDefaultConfigDTO> applicationDefaults = defaultConfigAll.get(EntityType.APPLICATION);
+        List<DeepDefaultConfigDTO> eventDefaults = defaultConfigAll.get(EntityType.EVENT);
+        List<DeepDefaultConfigDTO> publisherDefaults = defaultConfigAll.get(EntityType.PUBLISHER);
 
-        // 2) Get publisher-specific config (entity list)
+        // 2) Get publisher-specific config (entity list from DB)
         List<PublisherConfig> publisherConfig = customConfigService.findPublisherConfig(producer, env);
 
-        // 3) Build finalPublisherConfig (all defaults with PUBLISHER merged with publisherConfig)
-        List<PublisherConfigDTO> finalPublisherConfig = buildFinalPublisherConfigDTOs(defaultConfigAll, publisherConfig, producer);
+        // 3) Merge all defaults + publisherConfig into finalPublisherConfig
+        List<PublisherConfigDTO> finalPublisherConfig =
+                buildFinalPublisherConfigDTOs(defaultConfigAll, publisherConfig, producer);
 
-        // 4) Your existing event size logic (unchanged)
-        String maxEventSize = getPropertyValue(defaultEventProps, MAX_EVENT_SIZE_IN_KB_PROP);
+        // 4) Event size logic (unchanged)
+        String maxEventSize = getPropertyValue(eventDefaults, MAX_EVENT_SIZE_IN_KB_PROP);
         Integer maxEventSizeKb = (maxEventSize == null || maxEventSize.trim().isEmpty())
                 ? null : Integer.parseInt(maxEventSize);
 
         List<EventFileTypeConfig> eventFileTypeConfigs =
-                getEventFileTypeConfigDTO(defaultEventProps, getEventFileTypeConfigByPublisherAndEnv(producer, env), maxEventSizeKb);
+                getEventFileTypeConfigDTO(eventDefaults,
+                        getEventFileTypeConfigByPublisherAndEnv(producer, env), maxEventSizeKb);
 
         List<EventFileTypeConfig> eventFileTypeAndCustomSize =
-                getEventFileTypeConfigDTO(defaultEventProps, eventFileTypeConfigs, maxEventSizeKb);
+                getEventFileTypeConfigDTO(eventDefaults, eventFileTypeConfigs, maxEventSizeKb);
 
-        // 5) Build final DTO (unchanged fields)
+        // 5) Build final DTO
         return LargeFilePublisherConfigDTO.builder()
                 .env(env)
                 .publisher(producer)
-                .applicationDefaults(defaultApplicationProps)
-                .eventDefaults(defaultEventProps)
-                .publisherDefaults(defaultPublisherProps)
+                .applicationDefaults(applicationDefaults)
+                .eventDefaults(eventDefaults)
+                .publisherDefaults(publisherDefaults)
                 .publisherConfig(finalPublisherConfig)
                 .eventFileTypes(eventFileTypeAndCustomSize)
                 .build();
     }
 
     // =========================================================================
-    // Option 2: Single-loop merge (keep EntityType; overrides only for PUBLISHER)
+    // Merge logic: Option 2 (single loop, proper names)
     // =========================================================================
     private List<PublisherConfigDTO> buildFinalPublisherConfigDTOs(
             Map<EntityType, List<DeepDefaultConfigDTO>> defaultConfigAll,
-            List<PublisherConfig> publisherConfig,
+            List<PublisherConfig> publisherConfigList,
             String producer
     ) {
-        // Resolve publisher name (prefer entity list if present)
-        String publisherName = (publisherConfig != null && !publisherConfig.isEmpty())
-                ? publisherConfig.get(0).getPublisherName()
+        // Resolve publisher name
+        String publisherName = (publisherConfigList != null && !publisherConfigList.isEmpty())
+                ? publisherConfigList.get(0).getPublisherName()
                 : producer;
 
-        // Merge PUBLISHER defaults with publisherConfig overrides (by propertyName)
-        LinkedHashMap<String, String> publisherMerged = new LinkedHashMap<>();
-        List<DeepDefaultConfigDTO> defaultPublisherProps =
+        // Merge publisher defaults with publisherConfig overrides
+        LinkedHashMap<String, String> mergedPublisherProperties = new LinkedHashMap<>();
+        List<DeepDefaultConfigDTO> publisherDefaults =
                 defaultConfigAll.getOrDefault(EntityType.PUBLISHER, Collections.emptyList());
 
-        // baseline: PUBLISHER defaults
-        for (DeepDefaultConfigDTO d : defaultPublisherProps) {
-            publisherMerged.put(d.getPropertyName(), d.getPropertyValue());
+        // baseline: publisher defaults
+        for (DeepDefaultConfigDTO defaultProperty : publisherDefaults) {
+            mergedPublisherProperties.put(defaultProperty.getPropertyName(), defaultProperty.getPropertyValue());
         }
-        // overrides: publisherConfig (non-blank only)
-        if (publisherConfig != null) {
-            for (PublisherConfig p : publisherConfig) {
-                String v = p.getPropertyValue();
-                if (v != null && !v.trim().isEmpty()) {
-                    publisherMerged.put(p.getPropertyName(), v);
+
+        // overrides: publisherConfig (non-blank values only)
+        if (publisherConfigList != null) {
+            for (PublisherConfig publisherProperty : publisherConfigList) {
+                String propertyValue = publisherProperty.getPropertyValue();
+                if (propertyValue != null && !propertyValue.trim().isEmpty()) {
+                    mergedPublisherProperties.put(publisherProperty.getPropertyName(), propertyValue);
                 }
             }
         }
 
-        // Build final list in a single loop over defaultConfigAll
-        List<PublisherConfigDTO> out = new ArrayList<>();
-        for (Map.Entry<EntityType, List<DeepDefaultConfigDTO>> entry : defaultConfigAll.entrySet()) {
-            EntityType et = entry.getKey();
-            List<DeepDefaultConfigDTO> defaults = entry.getValue();
+        // Build final list in a single loop over all entity types
+        List<PublisherConfigDTO> finalConfigList = new ArrayList<>();
+        for (Map.Entry<EntityType, List<DeepDefaultConfigDTO>> entityDefaultsEntry : defaultConfigAll.entrySet()) {
+            EntityType entityType = entityDefaultsEntry.getKey();
+            List<DeepDefaultConfigDTO> entityDefaults = entityDefaultsEntry.getValue();
 
-            if (et == EntityType.PUBLISHER) {
-                // use merged publisher map
-                for (Map.Entry<String, String> e : publisherMerged.entrySet()) {
-                    out.add(new PublisherConfigDTO(publisherName, e.getKey(), e.getValue(), EntityType.PUBLISHER));
+            if (entityType == EntityType.PUBLISHER) {
+                // Use merged publisher map
+                for (Map.Entry<String, String> mergedEntry : mergedPublisherProperties.entrySet()) {
+                    finalConfigList.add(new PublisherConfigDTO(
+                            publisherName,
+                            mergedEntry.getKey(),
+                            mergedEntry.getValue(),
+                            EntityType.PUBLISHER));
                 }
             } else {
-                // APPLICATION / EVENT pass-through (preserve their entity type)
-                if (defaults != null) {
-                    for (DeepDefaultConfigDTO d : defaults) {
-                        out.add(new PublisherConfigDTO(publisherName, d.getPropertyName(), d.getPropertyValue(), et));
+                // APPLICATION and EVENT pass-through
+                if (entityDefaults != null) {
+                    for (DeepDefaultConfigDTO defaultProperty : entityDefaults) {
+                        finalConfigList.add(new PublisherConfigDTO(
+                                publisherName,
+                                defaultProperty.getPropertyName(),
+                                defaultProperty.getPropertyValue(),
+                                entityType));
                     }
                 }
             }
         }
 
-        return out;
+        return finalConfigList;
     }
 
     // =========================================================================
-    // Existing helpers (left as-is / minimal changes)
+    // Existing helpers (unchanged)
     // =========================================================================
     private List<EventFileTypeConfig> getEventFileTypeConfigByPublisherAndEnv(String publisher, String env) {
         return entityManager
@@ -144,7 +154,7 @@ public class LargeFileConfigServiceV4Impl implements LargeFileConfigServiceV4 {
                 .getResultList();
     }
 
-    private List<EventFileTypeConfig> getEventFileTypeConfigDTO(List<DeepDefaultConfigDTO> defaultEventProps,
+    private List<EventFileTypeConfig> getEventFileTypeConfigDTO(List<DeepDefaultConfigDTO> eventDefaults,
                                                                 List<EventFileTypeConfig> eventFileTypeConfigs,
                                                                 Integer maxEventSizeKb) {
         // keep your existing mapping logic
