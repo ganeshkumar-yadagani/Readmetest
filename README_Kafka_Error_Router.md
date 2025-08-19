@@ -1,171 +1,247 @@
-package com.tmobile.deep.service.v4.impl;
+package com.yourorg.largefile.publisher;
 
-import com.tmobile.deep.service.DeepCustomConfigService;
-import com.tmobile.deep.service.DeepDefaultConfigService;
-import com.tmobile.deep.service.dto.DeepDefaultConfigDTO;
-import com.tmobile.deep.service.dto.PublisherConfigDTO;
-import com.tmobile.deep.service.entity.PublisherConfig;
-import com.tmobile.deep.service.enums.EntityType;
-import com.tmobile.deep.service.v4.LargeFileConfigServiceV4;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+import com.azure.core.credential.TokenCredential;
+import com.azure.storage.blob.BlobServiceClient;
+import com.azure.storage.blob.BlobServiceClientBuilder;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import javax.persistence.EntityManager;
-import javax.persistence.PersistenceContext;
-import java.util.*;
+import java.net.MalformedURLException;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
 
-@Service
-public class LargeFileConfigServiceV4Impl implements LargeFileConfigServiceV4 {
+public class LargeStorageBuilder {
 
-    @Autowired
-    private DeepDefaultConfigService defaultConfigService;
+    private static final Logger LOGGER = LoggerFactory.getLogger(LargeStorageBuilder.class);
 
-    @Autowired
-    private DeepCustomConfigService customConfigService;
+    // ---------- Entity types ----------
+    private static final String ET_PUBLISHER = "PUBLISHER";
+    private static final String ET_EVENT     = "EVENT";
 
-    @PersistenceContext
-    private EntityManager entityManager;
+    // ---------- Rules payload field names ----------
+    private static final String FIELD_PUBLISHER_CONFIGS = "publisherConfigs";
+    private static final String FIELD_LFE_CONFIGS       = "largeFileEventConfigs";
+    private static final String FIELD_ENTITY_TYPE       = "entityType";
+    private static final String FIELD_PROPERTY_NAME     = "propertyName";
+    private static final String FIELD_PROPERTY_VALUE    = "propertyValue";
+    private static final String FIELD_EVENT_TYPE        = "eventType";
+    private static final String FIELD_MAX_SIZE_KB       = "maxEventSizeInKb";
+    private static final String FIELD_LARGEFILE_TYPE    = "largeFileType";
 
-    private static final String MAX_EVENT_SIZE_IN_KB_PROP = "deep.event.largefile.maxEventSizeInKb";
+    // ---------- Known property keys coming from publisherConfigs ----------
+    private static final String STRIPNULLS_PROP        = "deep.largefile.stripNulls";
+    private static final String RETRIES_PROP           = "deep.event.largefile.retries";
+    private static final String TENANTID_PROP          = "deep.largefile.azure.tenantId";
+    private static final String AUTHORITY_PROP         = "deep.largefile.azure.authority";
+    private static final String STORAGEACCOUNT_PROP    = "deep.largefile.azure.storageAccount";
+    private static final String RESOURCE_PROP          = "deep.largefile.azure.resource";
 
-    @Override
-    public LargeFilePublisherConfigDTO buildLargeFilePublisherConfigDTO(String env, String producer) {
-        // 1) Load all defaults
-        List<EntityType> entityTypes = Arrays.asList(EntityType.APPLICATION, EntityType.EVENT, EntityType.PUBLISHER);
-        Map<EntityType, List<DeepDefaultConfigDTO>> defaultConfigAll =
-                defaultConfigService.findByEntityTypesAndEnv(env, entityTypes, null);
+    // ---------- Defaults / tuning ----------
+    private static final long DEFAULT_BLOCK_SIZE       = 4L * 1024 * 1024; // 4 MB
+    private static final long DEFAULT_TIMEOUT_IN_SEC   = 300L;
+    private static final int  DEFAULT_MAX_CONCURRENCY  = 8;
 
-        List<DeepDefaultConfigDTO> applicationDefaults = defaultConfigAll.get(EntityType.APPLICATION);
-        List<DeepDefaultConfigDTO> eventDefaults = defaultConfigAll.get(EntityType.EVENT);
-        List<DeepDefaultConfigDTO> publisherDefaults = defaultConfigAll.get(EntityType.PUBLISHER);
+    // ---------- Builder inputs ----------
+    private final String environment;
+    private String applicationId;     // clientId / appId for Azure AD
+    private boolean enableCertAuth;   // true = cert auth, false = client secret
+    private String clientSecret;      // used when enableCertAuth = false
+    private String publicCertPem;     // used when enableCertAuth = true
 
-        // 2) Get publisher-specific config (entity list from DB)
-        List<PublisherConfig> publisherConfig = customConfigService.findPublisherConfig(producer, env);
+    // optionally allow injecting a prebuilt BlobServiceClient (tests)
+    private BlobServiceClient prebuiltBlobServiceClient;
 
-        // 3) Merge all defaults + publisherConfig into finalPublisherConfig
-        List<PublisherConfigDTO> finalPublisherConfig =
-                buildFinalPublisherConfigDTOs(defaultConfigAll, publisherConfig, producer);
-
-        // 4) Event size logic (unchanged)
-        String maxEventSize = getPropertyValue(eventDefaults, MAX_EVENT_SIZE_IN_KB_PROP);
-        Integer maxEventSizeKb = (maxEventSize == null || maxEventSize.trim().isEmpty())
-                ? null : Integer.parseInt(maxEventSize);
-
-        List<EventFileTypeConfig> eventFileTypeConfigs =
-                getEventFileTypeConfigDTO(eventDefaults,
-                        getEventFileTypeConfigByPublisherAndEnv(producer, env), maxEventSizeKb);
-
-        List<EventFileTypeConfig> eventFileTypeAndCustomSize =
-                getEventFileTypeConfigDTO(eventDefaults, eventFileTypeConfigs, maxEventSizeKb);
-
-        // 5) Build final DTO
-        return LargeFilePublisherConfigDTO.builder()
-                .env(env)
-                .publisher(producer)
-                .applicationDefaults(applicationDefaults)
-                .eventDefaults(eventDefaults)
-                .publisherDefaults(publisherDefaults)
-                .publisherConfig(finalPublisherConfig)
-                .eventFileTypes(eventFileTypeAndCustomSize)
-                .build();
+    public LargeStorageBuilder(String environment) {
+        this.environment = environment;
     }
 
-    // =========================================================================
-    // Merge logic: Option 2 (single loop, proper names)
-    // =========================================================================
-    private List<PublisherConfigDTO> buildFinalPublisherConfigDTOs(
-            Map<EntityType, List<DeepDefaultConfigDTO>> defaultConfigAll,
-            List<PublisherConfig> publisherConfigList,
-            String producer
-    ) {
-        // Resolve publisher name
-        String publisherName = (publisherConfigList != null && !publisherConfigList.isEmpty())
-                ? publisherConfigList.get(0).getPublisherName()
-                : producer;
+    public LargeStorageBuilder withApplicationId(String applicationId) {
+        this.applicationId = applicationId;
+        return this;
+    }
 
-        // Merge publisher defaults with publisherConfig overrides
-        LinkedHashMap<String, String> mergedPublisherProperties = new LinkedHashMap<>();
-        List<DeepDefaultConfigDTO> publisherDefaults =
-                defaultConfigAll.getOrDefault(EntityType.PUBLISHER, Collections.emptyList());
+    /** Use Azure AD client secret flow. */
+    public LargeStorageBuilder withAzureSecret(String clientSecret) {
+        this.enableCertAuth = false;
+        this.clientSecret   = clientSecret;
+        return this;
+    }
 
-        // baseline: publisher defaults
-        for (DeepDefaultConfigDTO defaultProperty : publisherDefaults) {
-            mergedPublisherProperties.put(defaultProperty.getPropertyName(), defaultProperty.getPropertyValue());
+    /** Use Azure AD certificate (PEM) flow. */
+    public LargeStorageBuilder withAzureCertificate(String publicCertPem) {
+        this.enableCertAuth = true;
+        this.publicCertPem  = publicCertPem;
+        return this;
+    }
+
+    /** For tests or special cases. If set, builder will not create a new BlobServiceClient. */
+    public LargeStorageBuilder withBlobServiceClient(BlobServiceClient client) {
+        this.prebuiltBlobServiceClient = client;
+        return this;
+    }
+
+    /**
+     * Build EventStorage by calling rules, extracting publisher configs for a specific entity type,
+     * parsing large-file event configs, building Azure credential & BlobServiceClient.
+     */
+    public EventStorage build() throws StorageInitializationException {
+        // 1) Pull rules JSON (your existing call)
+        JsonNode root = callLargeFileRules();
+        if (root == null) {
+            throw new StorageInitializationException("Rules response was empty", 6000);
         }
 
-        // overrides: publisherConfig (non-blank values only)
-        if (publisherConfigList != null) {
-            for (PublisherConfig publisherProperty : publisherConfigList) {
-                String propertyValue = publisherProperty.getPropertyValue();
-                if (propertyValue != null && !propertyValue.trim().isEmpty()) {
-                    mergedPublisherProperties.put(publisherProperty.getPropertyName(), propertyValue);
-                }
+        // 2) Optional global tuning (keep backward compatible)
+        long blockSize       = getLong(root, "blockSize", DEFAULT_BLOCK_SIZE);
+        long timeoutSec      = getLong(root, "timeout", DEFAULT_TIMEOUT_IN_SEC);
+        int  maxConcurrency  = getInt (root, "maxConcurrency", DEFAULT_MAX_CONCURRENCY);
+
+        // 3) Build a minimal index of publisherConfigs -> read only specific properties
+        //    PUBLISHER-scoped properties
+        boolean stripNulls     = readBooleanProp(root, ET_PUBLISHER, STRIPNULLS_PROP, true);
+        String  tenantId       = readStringProp (root, ET_PUBLISHER, TENANTID_PROP,       null);
+        String  authorityUrl   = readStringProp (root, ET_PUBLISHER, AUTHORITY_PROP,      null);
+        String  resourceUrl    = readStringProp (root, ET_PUBLISHER, RESOURCE_PROP,       null);
+        String  storageAccount = readStringProp (root, ET_PUBLISHER, STORAGEACCOUNT_PROP, null);
+
+        //    EVENT-scoped property (example: token retries)
+        int tokenRetries       = readIntProp   (root, ET_EVENT,     RETRIES_PROP,          3);
+
+        // 4) Validate required azure fields
+        requireNonBlank(storageAccount, "Missing publisher property: " + STORAGEACCOUNT_PROP, 7001);
+        requireNonBlank(tenantId,       "Missing publisher property: " + TENANTID_PROP,       7002);
+        requireNonBlank(authorityUrl,   "Missing publisher property: " + AUTHORITY_PROP,      7003);
+        requireNonBlank(resourceUrl,    "Missing publisher property: " + RESOURCE_PROP,       7004);
+
+        // 5) Parse largeFileEventConfigs -> map
+        Map<String, LargeStorageEventConfig> eventConfigMap = parseEventConfigs(root.path(FIELD_LFE_CONFIGS));
+        if (eventConfigMap.isEmpty()) {
+            throw new StorageInitializationException("There are no events configured for this publisher.", 7000);
+        }
+
+        // 6) Build credential (secret or cert) using your existing provider
+        TokenCredential credential;
+        try {
+            credential = new AzureTokenProvider(
+                    tenantId,
+                    applicationId,
+                    enableCertAuth,
+                    clientSecret,
+                    publicCertPem,
+                    authorityUrl,
+                    resourceUrl
+            ).getTokenProvider(tokenRetries); // adjust if your API differs
+        } catch (MalformedURLException e) {
+            LOGGER.error("Malformed URL in Azure configuration", e);
+            throw new StorageInitializationException("Invalid Azure URL(s) in configuration", 7005);
+        } catch (RuntimeException re) {
+            LOGGER.error("Azure credential creation failed", re);
+            throw new StorageInitializationException("Failed to build Azure credentials", re, 7006);
+        }
+
+        // 7) BlobServiceClient: reuse if injected, else build a fresh one
+        BlobServiceClient blobServiceClient = this.prebuiltBlobServiceClient;
+        if (blobServiceClient == null) {
+            String endpoint = "https://" + storageAccount + ".blob.core.windows.net/";
+            blobServiceClient = new BlobServiceClientBuilder()
+                    .endpoint(endpoint)
+                    .credential(credential)
+                    .buildClient();
+        }
+
+        // 8) Return EventStorage (single client reused; containers resolved inside EventStorage)
+        return new EventStorage(
+                environment,
+                blobServiceClient,
+                eventConfigMap,
+                stripNulls,
+                blockSize,
+                maxConcurrency,
+                timeoutSec
+        );
+    }
+
+    // ======= JSON helpers (DTO‑free) =======
+
+    /** Read a single property from publisherConfigs filtered by entityType. */
+    private static String readStringProp(JsonNode root, String entityType, String propName, String defVal) {
+        JsonNode list = root.path(FIELD_PUBLISHER_CONFIGS);
+        if (!list.isArray()) return defVal;
+
+        for (JsonNode n : list) {
+            if (!entityType.equalsIgnoreCase(n.path(FIELD_ENTITY_TYPE).asText(null))) continue;
+            if (!propName.equals(n.path(FIELD_PROPERTY_NAME).asText(null))) continue;
+
+            String v = n.path(FIELD_PROPERTY_VALUE).asText(null);
+            return v != null ? v.trim() : defVal;
+        }
+        return defVal;
+    }
+
+    private static boolean readBooleanProp(JsonNode root, String entityType, String propName, boolean defVal) {
+        String v = readStringProp(root, entityType, propName, null);
+        if (v == null) return defVal;
+        String s = v.trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(s) || "1".equals(s) || "yes".equals(s)) return true;
+        if ("false".equals(s) || "0".equals(s) || "no".equals(s)) return false;
+        return defVal;
+    }
+
+    private static int readIntProp(JsonNode root, String entityType, String propName, int defVal) {
+        String v = readStringProp(root, entityType, propName, null);
+        if (v == null) return defVal;
+        try { return Integer.parseInt(v.trim()); } catch (NumberFormatException ignore) { return defVal; }
+    }
+
+    private static Map<String, LargeStorageEventConfig> parseEventConfigs(JsonNode arr) {
+        Map<String, LargeStorageEventConfig> map = new HashMap<>();
+        if (arr == null || !arr.isArray()) return map;
+
+        for (JsonNode cfg : arr) {
+            String eventType = text(cfg, FIELD_EVENT_TYPE, null);
+            if (eventType == null || eventType.isBlank()) continue;
+
+            int maxSizeKb = getInt(cfg, FIELD_MAX_SIZE_KB, 100);
+            String lfTypeRaw = text(cfg, FIELD_LARGEFILE_TYPE, "NONE");
+
+            LargeFileType lfType;
+            try {
+                lfType = LargeFileType.valueOf(lfTypeRaw);
+            } catch (IllegalArgumentException e) {
+                lfType = LargeFileType.NONE;
             }
+
+            map.put(eventType, new LargeStorageEventConfig(eventType, maxSizeKb, lfType));
         }
+        return map;
+    }
 
-        // Build final list in a single loop over all entity types
-        List<PublisherConfigDTO> finalConfigList = new ArrayList<>();
-        for (Map.Entry<EntityType, List<DeepDefaultConfigDTO>> entityDefaultsEntry : defaultConfigAll.entrySet()) {
-            EntityType entityType = entityDefaultsEntry.getKey();
-            List<DeepDefaultConfigDTO> entityDefaults = entityDefaultsEntry.getValue();
+    private static String text(JsonNode node, String field, String def) {
+        JsonNode v = node.get(field);
+        return (v == null || v.isNull()) ? def : v.asText();
+    }
 
-            if (entityType == EntityType.PUBLISHER) {
-                // Use merged publisher map
-                for (Map.Entry<String, String> mergedEntry : mergedPublisherProperties.entrySet()) {
-                    finalConfigList.add(new PublisherConfigDTO(
-                            publisherName,
-                            mergedEntry.getKey(),
-                            mergedEntry.getValue(),
-                            EntityType.PUBLISHER));
-                }
-            } else {
-                // APPLICATION and EVENT pass-through
-                if (entityDefaults != null) {
-                    for (DeepDefaultConfigDTO defaultProperty : entityDefaults) {
-                        finalConfigList.add(new PublisherConfigDTO(
-                                publisherName,
-                                defaultProperty.getPropertyName(),
-                                defaultProperty.getPropertyValue(),
-                                entityType));
-                    }
-                }
-            }
+    private static int getInt(JsonNode node, String field, int def) {
+        JsonNode v = node.get(field);
+        return (v == null || v.isNull()) ? def : v.asInt(def);
+    }
+
+    private static long getLong(JsonNode node, String field, long def) {
+        JsonNode v = node.get(field);
+        return (v == null || v.isNull()) ? def : v.asLong(def);
+    }
+
+    private static void requireNonBlank(String s, String message, int code) throws StorageInitializationException {
+        if (s == null || s.trim().isEmpty()) {
+            throw new StorageInitializationException(message, code);
         }
-
-        return finalConfigList;
     }
 
-    // =========================================================================
-    // Existing helpers (unchanged)
-    // =========================================================================
-    private List<EventFileTypeConfig> getEventFileTypeConfigByPublisherAndEnv(String publisher, String env) {
-        return entityManager
-                .createNamedQuery("EventFileTypeConfig.findByPublisherAndEnv", EventFileTypeConfig.class)
-                .setParameter(1, publisher)
-                .setParameter(2, env)
-                .getResultList();
-    }
-
-    private List<EventFileTypeConfig> getEventCustomConfigByPublisherAndEnv(String publisher, String env) {
-        return entityManager
-                .createNamedQuery("EventFileTypeConfig.findCustomByPublisherAndEnv", EventFileTypeConfig.class)
-                .setParameter(1, publisher)
-                .setParameter(2, env)
-                .getResultList();
-    }
-
-    private List<EventFileTypeConfig> getEventFileTypeConfigDTO(List<DeepDefaultConfigDTO> eventDefaults,
-                                                                List<EventFileTypeConfig> eventFileTypeConfigs,
-                                                                Integer maxEventSizeKb) {
-        // keep your existing mapping logic
-        return eventFileTypeConfigs;
-    }
-
-    private String getPropertyValue(List<DeepDefaultConfigDTO> defaultProps, String key) {
-        DeepDefaultConfigDTO config = defaultProps.stream()
-                .filter(c -> key.equals(c.getPropertyName()))
-                .findFirst()
-                .orElseThrow(() -> new MissingPublisherConfigException("Value missing in database config"));
-        return config.getPropertyValue();
+    // ======= You already have this; keep your existing implementation =======
+    private JsonNode callLargeFileRules() {
+        // TODO: call your rules service / config provider and return the JsonNode
+        throw new UnsupportedOperationException("callLargeFileRules() must be implemented");
     }
 }
