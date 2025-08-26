@@ -1,358 +1,242 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.tmobile.deepio</groupId>
-    <artifactId>deepio-token-generator</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <packaging>jar</packaging>
-    <name>deepio-token-generator</name>
+# 🛡️ deepio-token-generator
 
-    <properties>
-        <java.version>1.8</java.version>
-        <msal.version>1.19.1</msal.version>
-        <json.smart.version>2.5.2</json.smart.version>
-        <spring.boot.version>2.5.14</spring.boot.version>
-    </properties>
+A production-ready **Java Token Generator Library** for generating, caching, and refreshing **OAuth2 tokens**. Supports:
 
-    <dependencies>
-        <!-- Spring Boot Core -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-            <scope>provided</scope>
-        </dependency>
+- 🔑 **Basic Auth (client_id + secret)**
+- 🔐 **Azure AD Certificate-based authentication (client assertion)**
+- 🔁 Built-in **retry logic** using Spring Retry
+- 🔄 Smart **token caching** with auto-renew on expiry
+- ✅ Compatible with Spring Boot apps and libraries
 
-        <!-- Web + Retry Support -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-web</artifactId>
-        </dependency>
+![Java](https://img.shields.io/badge/Java-8%2F11%2F17-blue.svg)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%2F3.x-brightgreen)
+![License](https://img.shields.io/badge/license-TMobile--Internal-orange)
 
-        <dependency>
-            <groupId>org.springframework.retry</groupId>
-            <artifactId>spring-retry</artifactId>
-        </dependency>
+---
 
-        <!-- Token Config Properties -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-configuration-processor</artifactId>
-            <optional>true</optional>
-        </dependency>
+## 🔧 Compatibility
 
-        <!-- MSAL4J -->
-        <dependency>
-            <groupId>com.microsoft.azure</groupId>
-            <artifactId>msal4j</artifactId>
-            <version>${msal.version}</version>
-        </dependency>
+| Component      | Version                     |
+|----------------|-----------------------------|
+| Java           | `8`, `11`, `17`             |
+| Spring Boot    | `2.7.x` and `3.x`            |
+| MSAL4J         | `1.13.8` or later            |
+| Jackson        | `2.13+`                     |
+| Spring Retry   | `1.3.1+`                    |
 
-        <!-- JSON smart (required by MSAL4J) -->
-        <dependency>
-            <groupId>net.minidev</groupId>
-            <artifactId>json-smart</artifactId>
-            <version>${json.smart.version}</version>
-        </dependency>
+---
 
-        <!-- Optional: Commons Lang -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-lang3</artifactId>
-        </dependency>
+## ⚙️ Features
 
-        <!-- Lombok (optional for compile time only) -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
-    </dependencies>
+- 🔒 Secure token generation for **Azure AD OAuth2**
+- ☁️ Supports **secret-based** and **certificate-based** flows
+- ♻️ Token **caching and expiry handling** using `OffsetDateTime`
+- 🔁 Built-in **retry template** support with configurable retry delay and count
+- 🧾 Configurable via `application.yml` or environment variables
+- 🧰 Designed to be imported as a shared library (JAR)
 
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring.boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+---
 
-    <build>
-        <plugins>
-            <!-- Java Compile Plugin -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <configuration>
-                    <source>${java.version}</source>
-                    <target>${java.version}</target>
-                </configuration>
-            </plugin>
+## 📦 How to Use
 
-            <!-- Optional: Shade Plugin for Fat Jar if needed -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.4.1</version>
-                <configuration>
-                    <createDependencyReducedPom>false</createDependencyReducedPom>
-                </configuration>
-            </plugin>
-        </plugins>
-    </build>
-</project>
+### 1. Add as a Dependency
 
+If installed to your **local Maven repo**:
 
+```xml
+<dependency>
+  <groupId>com.tmobile.deep</groupId>
+  <artifactId>deepio-token-generator</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
 
-package com.yourorg.largefile.publisher;
+Or install manually:
 
-import com.azure.core.credential.TokenCredential;
-import com.azure.storage.blob.BlobServiceClient;
-import com.azure.storage.blob.BlobServiceClientBuilder;
-import com.fasterxml.jackson.databind.JsonNode;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+```bash
+mvn clean install
+```
 
-import java.net.MalformedURLException;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
+---
 
-public class LargeStorageBuilder {
+### 2. Configure in `application.yml`
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(LargeStorageBuilder.class);
+```yaml
+azure-token:
+  enable-cert-auth: false   # true for cert-based auth
+  authorization: Basic ${AZURE_TOKEN_AUTHORIZATION}
+  auth-host: ${AZURE_AUTH_HOST}
+  auth-path: ${AZURE_AUTH_PATH}
+  client-id: ${AZURE_CLIENT_ID}
+  tenant-id: ${AZURE_TENANT_ID}
+  public-cert-pem: ${AZURE_PUBLIC_CERT}
+  private-key-pem: ${AZURE_PRIVATE_KEY}
+  retry: 3
+  retry-delay: 2000
+```
 
-    // ---------- Entity types ----------
-    private static final String ET_PUBLISHER = "PUBLISHER";
-    private static final String ET_EVENT     = "EVENT";
+---
 
-    // ---------- Rules payload field names ----------
-    private static final String FIELD_PUBLISHER_CONFIGS = "publisherConfigs";
-    private static final String FIELD_LFE_CONFIGS       = "largeFileEventConfigs";
-    private static final String FIELD_ENTITY_TYPE       = "entityType";
-    private static final String FIELD_PROPERTY_NAME     = "propertyName";
-    private static final String FIELD_PROPERTY_VALUE    = "propertyValue";
-    private static final String FIELD_EVENT_TYPE        = "eventType";
-    private static final String FIELD_MAX_SIZE_KB       = "maxEventSizeInKb";
-    private static final String FIELD_LARGEFILE_TYPE    = "largeFileType";
+### 3. Autowire the Token Generator
 
-    // ---------- Known property keys coming from publisherConfigs ----------
-    private static final String STRIPNULLS_PROP        = "deep.largefile.stripNulls";
-    private static final String RETRIES_PROP           = "deep.event.largefile.retries";
-    private static final String TENANTID_PROP          = "deep.largefile.azure.tenantId";
-    private static final String AUTHORITY_PROP         = "deep.largefile.azure.authority";
-    private static final String STORAGEACCOUNT_PROP    = "deep.largefile.azure.storageAccount";
-    private static final String RESOURCE_PROP          = "deep.largefile.azure.resource";
+```java
+@Autowired
+private TokenGeneratorUtil tokenGeneratorUtil;
 
-    // ---------- Defaults / tuning ----------
-    private static final long DEFAULT_BLOCK_SIZE       = 4L * 1024 * 1024; // 4 MB
-    private static final long DEFAULT_TIMEOUT_IN_SEC   = 300L;
-    private static final int  DEFAULT_MAX_CONCURRENCY  = 8;
+String token = tokenGeneratorUtil.getAccessToken();
+```
 
-    // ---------- Builder inputs ----------
-    private final String environment;
-    private String applicationId;     // clientId / appId for Azure AD
-    private boolean enableCertAuth;   // true = cert auth, false = client secret
-    private String clientSecret;      // used when enableCertAuth = false
-    private String publicCertPem;     // used when enableCertAuth = true
+Or:
 
-    // optionally allow injecting a prebuilt BlobServiceClient (tests)
-    private BlobServiceClient prebuiltBlobServiceClient;
+```java
+AuthToken token = tokenGeneratorUtil.getCachedToken();
+```
 
-    public LargeStorageBuilder(String environment) {
-        this.environment = environment;
-    }
+---
 
-    public LargeStorageBuilder withApplicationId(String applicationId) {
-        this.applicationId = applicationId;
-        return this;
-    }
+## 📂 Main Classes
 
-    /** Use Azure AD client secret flow. */
-    public LargeStorageBuilder withAzureSecret(String clientSecret) {
-        this.enableCertAuth = false;
-        this.clientSecret   = clientSecret;
-        return this;
-    }
+| Class                  | Purpose |
+|------------------------|---------|
+| `TokenGeneratorUtil`   | Main service for fetching + caching tokens |
+| `AuthToken`            | POJO holding access token + expiry info |
+| `ApiTokenConfig`       | Loads YAML config properties |
+| `AppConfig`            | Registers beans like `RestTemplate`, `RetryTemplate` |
+| `HttpStatusRetryPolicy`| Custom retry policy for status codes |
 
-    /** Use Azure AD certificate (PEM) flow. */
-    public LargeStorageBuilder withAzureCertificate(String publicCertPem) {
-        this.enableCertAuth = true;
-        this.publicCertPem  = publicCertPem;
-        return this;
-    }
+---
 
-    /** For tests or special cases. If set, builder will not create a new BlobServiceClient. */
-    public LargeStorageBuilder withBlobServiceClient(BlobServiceClient client) {
-        this.prebuiltBlobServiceClient = client;
-        return this;
-    }
+## 🧪 Testing
 
-    /**
-     * Build EventStorage by calling rules, extracting publisher configs for a specific entity type,
-     * parsing large-file event configs, building Azure credential & BlobServiceClient.
-     */
-    public EventStorage build() throws StorageInitializationException {
-        // 1) Pull rules JSON (your existing call)
-        JsonNode root = callLargeFileRules();
-        if (root == null) {
-            throw new StorageInitializationException("Rules response was empty", 6000);
-        }
+Unit tests are available using JUnit5 and Mockito.
 
-        // 2) Optional global tuning (keep backward compatible)
-        long blockSize       = getLong(root, "blockSize", DEFAULT_BLOCK_SIZE);
-        long timeoutSec      = getLong(root, "timeout", DEFAULT_TIMEOUT_IN_SEC);
-        int  maxConcurrency  = getInt (root, "maxConcurrency", DEFAULT_MAX_CONCURRENCY);
+To run:
 
-        // 3) Build a minimal index of publisherConfigs -> read only specific properties
-        //    PUBLISHER-scoped properties
-        boolean stripNulls     = readBooleanProp(root, ET_PUBLISHER, STRIPNULLS_PROP, true);
-        String  tenantId       = readStringProp (root, ET_PUBLISHER, TENANTID_PROP,       null);
-        String  authorityUrl   = readStringProp (root, ET_PUBLISHER, AUTHORITY_PROP,      null);
-        String  resourceUrl    = readStringProp (root, ET_PUBLISHER, RESOURCE_PROP,       null);
-        String  storageAccount = readStringProp (root, ET_PUBLISHER, STORAGEACCOUNT_PROP, null);
+```bash
+mvn test
+```
 
-        //    EVENT-scoped property (example: token retries)
-        int tokenRetries       = readIntProp   (root, ET_EVENT,     RETRIES_PROP,          3);
+Test token expiry logic:
 
-        // 4) Validate required azure fields
-        requireNonBlank(storageAccount, "Missing publisher property: " + STORAGEACCOUNT_PROP, 7001);
-        requireNonBlank(tenantId,       "Missing publisher property: " + TENANTID_PROP,       7002);
-        requireNonBlank(authorityUrl,   "Missing publisher property: " + AUTHORITY_PROP,      7003);
-        requireNonBlank(resourceUrl,    "Missing publisher property: " + RESOURCE_PROP,       7004);
+```java
+authToken.isTokenExpired(); // returns true/false
+```
 
-        // 5) Parse largeFileEventConfigs -> map
-        Map<String, LargeStorageEventConfig> eventConfigMap = parseEventConfigs(root.path(FIELD_LFE_CONFIGS));
-        if (eventConfigMap.isEmpty()) {
-            throw new StorageInitializationException("There are no events configured for this publisher.", 7000);
-        }
+---
 
-        // 6) Build credential (secret or cert) using your existing provider
-        TokenCredential credential;
-        try {
-            credential = new AzureTokenProvider(
-                    tenantId,
-                    applicationId,
-                    enableCertAuth,
-                    clientSecret,
-                    publicCertPem,
-                    authorityUrl,
-                    resourceUrl
-            ).getTokenProvider(tokenRetries); // adjust if your API differs
-        } catch (MalformedURLException e) {
-            LOGGER.error("Malformed URL in Azure configuration", e);
-            throw new StorageInitializationException("Invalid Azure URL(s) in configuration", 7005);
-        } catch (RuntimeException re) {
-            LOGGER.error("Azure credential creation failed", re);
-            throw new StorageInitializationException("Failed to build Azure credentials", re, 7006);
-        }
+## 🔐 Certificate-Based Authentication
 
-        // 7) BlobServiceClient: reuse if injected, else build a fresh one
-        BlobServiceClient blobServiceClient = this.prebuiltBlobServiceClient;
-        if (blobServiceClient == null) {
-            String endpoint = "https://" + storageAccount + ".blob.core.windows.net/";
-            blobServiceClient = new BlobServiceClientBuilder()
-                    .endpoint(endpoint)
-                    .credential(credential)
-                    .buildClient();
-        }
+When `enable-cert-auth=true`, the library:
 
-        // 8) Return EventStorage (single client reused; containers resolved inside EventStorage)
-        return new EventStorage(
-                environment,
-                blobServiceClient,
-                eventConfigMap,
-                stripNulls,
-                blockSize,
-                maxConcurrency,
-                timeoutSec
-        );
-    }
+- Builds a JWT client assertion using MSAL4J
+- Signs it using the private key from PEM
+- Sends the assertion to Azure `/token` endpoint
+- Extracts and caches the token response
 
-    // ======= JSON helpers (DTO‑free) =======
+---
 
-    /** Read a single property from publisherConfigs filtered by entityType. */
-    private static String readStringProp(JsonNode root, String entityType, String propName, String defVal) {
-        JsonNode list = root.path(FIELD_PUBLISHER_CONFIGS);
-        if (!list.isArray()) return defVal;
+## 🔁 Retry Support
 
-        for (JsonNode n : list) {
-            if (!entityType.equalsIgnoreCase(n.path(FIELD_ENTITY_TYPE).asText(null))) continue;
-            if (!propName.equals(n.path(FIELD_PROPERTY_NAME).asText(null))) continue;
+Retries are applied automatically for:
 
-            String v = n.path(FIELD_PROPERTY_VALUE).asText(null);
-            return v != null ? v.trim() : defVal;
-        }
-        return defVal;
-    }
+- `5xx` responses
+- Connection timeouts
+- Azure AD intermittent failures
 
-    private static boolean readBooleanProp(JsonNode root, String entityType, String propName, boolean defVal) {
-        String v = readStringProp(root, entityType, propName, null);
-        if (v == null) return defVal;
-        String s = v.trim().toLowerCase(Locale.ROOT);
-        if ("true".equals(s) || "1".equals(s) || "yes".equals(s)) return true;
-        if ("false".equals(s) || "0".equals(s) || "no".equals(s)) return false;
-        return defVal;
-    }
+Configured via:
 
-    private static int readIntProp(JsonNode root, String entityType, String propName, int defVal) {
-        String v = readStringProp(root, entityType, propName, null);
-        if (v == null) return defVal;
-        try { return Integer.parseInt(v.trim()); } catch (NumberFormatException ignore) { return defVal; }
-    }
+```yaml
+retry: 3
+retry-delay: 2000
+```
 
-    private static Map<String, LargeStorageEventConfig> parseEventConfigs(JsonNode arr) {
-        Map<String, LargeStorageEventConfig> map = new HashMap<>();
-        if (arr == null || !arr.isArray()) return map;
+---
 
-        for (JsonNode cfg : arr) {
-            String eventType = text(cfg, FIELD_EVENT_TYPE, null);
-            if (eventType == null || eventType.isBlank()) continue;
+## 📝 JavaDoc
 
-            int maxSizeKb = getInt(cfg, FIELD_MAX_SIZE_KB, 100);
-            String lfTypeRaw = text(cfg, FIELD_LARGEFILE_TYPE, "NONE");
+All public classes and methods include JavaDoc comments. Example:
 
-            LargeFileType lfType;
-            try {
-                lfType = LargeFileType.valueOf(lfTypeRaw);
-            } catch (IllegalArgumentException e) {
-                lfType = LargeFileType.NONE;
-            }
+```java
+/**
+ * Returns the cached token or generates a new one if expired.
+ */
+public String getAccessToken();
+```
 
-            map.put(eventType, new LargeStorageEventConfig(eventType, maxSizeKb, lfType));
-        }
-        return map;
-    }
+---
 
-    private static String text(JsonNode node, String field, String def) {
-        JsonNode v = node.get(field);
-        return (v == null || v.isNull()) ? def : v.asText();
-    }
+## 🔒 Secrets Management
 
-    private static int getInt(JsonNode node, String field, int def) {
-        JsonNode v = node.get(field);
-        return (v == null || v.isNull()) ? def : v.asInt(def);
-    }
+Use Kubernetes secrets or HashiCorp Vault to inject the following into the container:
 
-    private static long getLong(JsonNode node, String field, long def) {
-        JsonNode v = node.get(field);
-        return (v == null || v.isNull()) ? def : v.asLong(def);
-    }
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_TOKEN_AUTHORIZATION`
+- `AZURE_PRIVATE_KEY`, `AZURE_PUBLIC_CERT`
 
-    private static void requireNonBlank(String s, String message, int code) throws StorageInitializationException {
-        if (s == null || s.trim().isEmpty()) {
-            throw new StorageInitializationException(message, code);
-        }
-    }
+---
 
-    // ======= You already have this; keep your existing implementation =======
-    private JsonNode callLargeFileRules() {
-        // TODO: call your rules service / config provider and return the JsonNode
-        throw new UnsupportedOperationException("callLargeFileRules() must be implemented");
-    }
-}
+## 📜 License
+
+This project is internal and used within the **T-Mobile DEEP Platform**. Not for external distribution.
+
+---
+
+## 🙋 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Ensure code is formatted and tested
+4. Submit a merge request with context
+
+---
+
+## 📬 Contact
+
+**Ganesh Kumar Yadagani**  
+📧 ganeshkumar.yadagani@gmail.com  
+☁️ Atlanta, GA (EST)
+
+---
+
+## 🧩 How It Works in Consumer Applications (Across Java & Spring Versions)
+
+This token generator library is designed to be **plug-and-play** across a wide variety of Java and Spring Boot applications, regardless of their versions.
+
+### ✅ Java Compatibility
+- The compiled library is built with `Java 8` compatibility (`target=1.8`), making it **binary-compatible with Java 8, 11, and 17**.
+- Whether your consumer application uses Java 8 for legacy systems or Java 17 for modern microservices, this library can be safely added as a Maven dependency.
+
+### ✅ Spring Boot Compatibility
+- **Spring Boot 2.7.x** (common in stable microservices) — fully supported.
+- **Spring Boot 3.x** — fully compatible, tested with Jakarta namespace changes.
+- Beans like `RestTemplate`, `RetryTemplate`, and `ObjectMapper` are **auto-configured via `@Configuration`**, avoiding any version-specific wiring issues.
+
+### 🔄 How It Integrates with Consumers
+1. **Consumer includes the JAR in its `pom.xml`** and pulls the library via Nexus, GitLab Package Registry, or local install.
+2. **All YAML-based config remains within the consumer app**, giving full control of:
+   - `client-id`, `client-secret`, `certificate`, `retry settings`, etc.
+3. **No component scan is required**, since the library registers its beans explicitly via `@Configuration`.
+4. The consumer simply autowires:
+   ```java
+   @Autowired
+   private TokenGeneratorUtil tokenGeneratorUtil;
+   ```
+5. When `getAccessToken()` is called:
+   - If a valid token is cached, it's returned instantly.
+   - If not, the configured auth mode (basic or cert) is invoked to fetch a new token using `RestTemplate`.
+   - If token generation fails due to a retryable condition (5xx, timeouts), `RetryTemplate` will attempt retries based on configured delay/count.
+
+### 🔐 Secrets & Vault Integration
+- Consumers can inject secrets via:
+  - **Kubernetes Secrets + ConfigMap**
+  - **Helm Values + HashiCorp Vault PEM mount**
+  - **Environment Variables** like `AZURE_CLIENT_ID`, `AZURE_TOKEN_AUTHORIZATION`, etc.
+- The library supports dynamic value resolution using `${...}` in Spring `application.yml`.
+
+### 🧪 Test Strategy for Consumers
+- Unit tests in the consumer app can mock `TokenGeneratorUtil` or stub `RestTemplate` to simulate downstream token responses.
+- Integration tests can override YAML properties for mock tokens.
+
+---
