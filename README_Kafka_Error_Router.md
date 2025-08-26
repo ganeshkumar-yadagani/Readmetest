@@ -1,70 +1,34 @@
 
-# 🛡️ deepio-token-generator
+# 🔐 deepio-token-generator
 
-A production-ready **Java Token Generator Library** for generating, caching, and refreshing **OAuth2 tokens**. Supports:
+A lightweight and production-ready Java token generation library for generating and caching **OAuth2** tokens using either **Azure AD** (with secret or certificate-based authentication) or **Basic Auth**.
 
-- 🔑 **Basic Auth (client_id + secret)**
-- 🔐 **Azure AD Certificate-based authentication (client assertion)**
-- 🔁 Built-in **retry logic** using Spring Retry
-- 🔄 Smart **token caching** with auto-renew on expiry
-- ✅ Compatible with Spring Boot apps and libraries
+## 📦 Features
 
-![Java](https://img.shields.io/badge/Java-8%2F11%2F17-blue.svg)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%2F3.x-brightgreen)
-![License](https://img.shields.io/badge/license-TMobile--Internal-orange)
-
----
-
-## 🔧 Compatibility
-
-| Component      | Version                     |
-|----------------|-----------------------------|
-| Java           | `8`, `11`, `17`             |
-| Spring Boot    | `2.7.x` and `3.x`            |
-| MSAL4J         | `1.13.8` or later            |
-| Jackson        | `2.13+`                     |
-| Spring Retry   | `1.3.1+`                    |
+- ✅ Supports OAuth2 `client_credentials` grant flow
+- 🔑 Secret-based or certificate-based token generation (MSAL4J or REST)
+- 🔄 Automatic token renewal using expiry time from `expires_in` or JWT `exp`
+- 💾 In-memory token cache to avoid redundant requests
+- ♻️ Optional token cache invalidation support
+- ⚙️ Retry mechanism for transient (5xx) failures
+- ☕ Compatible with Java 8+ and Spring Boot 2.7.x / 3.x
 
 ---
 
-## ⚙️ Features
+## ⚙️ Maven Dependency
 
-- 🔒 Secure token generation for **Azure AD OAuth2**
-- ☁️ Supports **secret-based** and **certificate-based** flows
-- ♻️ Token **caching and expiry handling** using `OffsetDateTime`
-- 🔁 Built-in **retry template** support with configurable retry delay and count
-- 🧾 Configurable via `application.yml` or environment variables
-- 🧰 Designed to be imported as a shared library (JAR)
+This library is not deployed to Maven Central. Include as a local JAR or private repo dependency.
 
 ---
 
-## 📦 How to Use
+## 🚀 How It Works
 
-### 1. Add as a Dependency
+### 1. Configuration
 
-If installed to your **local Maven repo**:
-
-```xml
-<dependency>
-  <groupId>com.tmobile.deep</groupId>
-  <artifactId>deepio-token-generator</artifactId>
-  <version>1.0.0</version>
-</dependency>
-```
-
-Or install manually:
-
-```bash
-mvn clean install
-```
-
----
-
-### 2. Configure in `application.yml`
-
+Example `application.yml`:
 ```yaml
 azure-token:
-  enable-cert-auth: false   # true for cert-based auth
+  enable-cert-auth: false
   authorization: Basic ${AZURE_TOKEN_AUTHORIZATION}
   auth-host: ${AZURE_AUTH_HOST}
   auth-path: ${AZURE_AUTH_PATH}
@@ -72,171 +36,142 @@ azure-token:
   tenant-id: ${AZURE_TENANT_ID}
   public-cert-pem: ${AZURE_PUBLIC_CERT}
   private-key-pem: ${AZURE_PRIVATE_KEY}
-  retry: 3
-  retry-delay: 2000
+  enable-token-cache: true
 ```
 
 ---
 
-### 3. Autowire the Token Generator
+### 2. Generate and Use Token
+
+In your consumer application:
 
 ```java
 @Autowired
 private TokenGeneratorUtil tokenGeneratorUtil;
 
-String token = tokenGeneratorUtil.getAccessToken();
+// To get token (cached if valid)
+AuthToken token = tokenGeneratorUtil.getCachedToken(false);
+String accessToken = token.getAccessToken();
 ```
 
-Or:
+---
+
+## 🧠 Token Cache Logic
+
+Token is cached in memory as `cachedAuthToken`.
+
+### Token Retrieval Logic
+```java
+public AuthToken getCachedToken(boolean invalidateCache) {
+    if (invalidateCache || cachedAuthToken == null || cachedAuthToken.isTokenExpired()) {
+        clearTokenCache();
+        return generateAccessToken();
+    }
+    return cachedAuthToken;
+}
+```
+
+- If `cachedAuthToken` is `null` or near expiry, a new token is generated.
+- Expiry is checked via:
+```java
+public boolean isTokenExpired() {
+    return OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(5).isAfter(expireDateTime);
+}
+```
+This ensures refresh happens **5 minutes before actual expiration**.
+
+### Token Generation with Locking
+```java
+public AuthToken generateAccessToken() {
+    if (cachedAuthToken != null && !cachedAuthToken.isTokenExpired()) {
+        return cachedAuthToken;
+    }
+    lock.lock();
+    try {
+        // Fetch new token and cache it
+    } finally {
+        lock.unlock();
+    }
+}
+```
+
+---
+
+## 🔄 Retry Mechanism
+
+Built-in retry using Spring Retry:
+- Retries on 5xx errors from Azure
+- Controlled via `RetryTemplate` and policy beans
+
+---
+
+## 🛠 Java & Spring Compatibility
+
+| Component    | Version         |
+|--------------|------------------|
+| Java         | 8, 11, 17 (✅ tested) |
+| Spring Boot  | 2.7.x, 3.2.x      |
+| MSAL4J       | ✅ supported       |
+| RestTemplate | ✅ supported       |
+
+---
+
+## ✅ Usage in Consumer Apps
+
+Works with:
+- Spring Boot REST APIs (Java 8/11/17)
+- Scheduled Jobs / Background Services
+- Kafka / RabbitMQ producers needing OAuth2
+- Swagger-integrated microservices
+
+Just inject `TokenGeneratorUtil` and call:
 
 ```java
-AuthToken token = tokenGeneratorUtil.getCachedToken();
+String token = tokenGeneratorUtil.getCachedToken(false).getAccessToken();
 ```
 
 ---
 
-## 📂 Main Classes
+## 🧪 Testing Tip
 
-| Class                  | Purpose |
-|------------------------|---------|
-| `TokenGeneratorUtil`   | Main service for fetching + caching tokens |
-| `AuthToken`            | POJO holding access token + expiry info |
-| `ApiTokenConfig`       | Loads YAML config properties |
-| `AppConfig`            | Registers beans like `RestTemplate`, `RetryTemplate` |
-| `HttpStatusRetryPolicy`| Custom retry policy for status codes |
-
----
-
-## 🧪 Testing
-
-Unit tests are available using JUnit5 and Mockito.
-
-To run:
-
-```bash
-mvn test
-```
-
-Test token expiry logic:
-
+To test expiry logic:
 ```java
-authToken.isTokenExpired(); // returns true/false
+tokenGeneratorUtil.getCachedToken(true); // Invalidate cache
 ```
 
----
-
-## 🔐 Certificate-Based Authentication
-
-When `enable-cert-auth=true`, the library:
-
-- Builds a JWT client assertion using MSAL4J
-- Signs it using the private key from PEM
-- Sends the assertion to Azure `/token` endpoint
-- Extracts and caches the token response
-
----
-
-## 🔁 Retry Support
-
-Retries are applied automatically for:
-
-- `5xx` responses
-- Connection timeouts
-- Azure AD intermittent failures
-
-Configured via:
-
-```yaml
-retry: 3
-retry-delay: 2000
-```
-
----
-
-## 📝 JavaDoc
-
-All public classes and methods include JavaDoc comments. Example:
-
+To print UTC time while debugging:
 ```java
-/**
- * Returns the cached token or generates a new one if expired.
- */
-public String getAccessToken();
+System.out.println(OffsetDateTime.now(ZoneOffset.UTC));
 ```
 
 ---
 
-## 🔒 Secrets Management
+## 📁 Project Structure
 
-Use Kubernetes secrets or HashiCorp Vault to inject the following into the container:
-
-- `AZURE_CLIENT_ID`
-- `AZURE_TENANT_ID`
-- `AZURE_TOKEN_AUTHORIZATION`
-- `AZURE_PRIVATE_KEY`, `AZURE_PUBLIC_CERT`
+- `AuthToken.java` → Token wrapper model
+- `TokenGeneratorUtil.java` → Core token logic
+- `ApiTokenConfig.java` → YAML-mapped configuration
+- `HttpStatusRetryPolicy.java` → Retry strategy
 
 ---
 
-## 📜 License
+## 🧩 Optional: Maven Shade Plugin
 
-This project is internal and used within the **T-Mobile DEEP Platform**. Not for external distribution.
+If you want to package the library as a fat JAR:
 
----
-
-## 🙋 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Ensure code is formatted and tested
-4. Submit a merge request with context
-
----
-
-## 📬 Contact
-
-**Ganesh Kumar Yadagani**  
-📧 ganeshkumar.yadagani@gmail.com  
-☁️ Atlanta, GA (EST)
+```xml
+<plugin>
+  <groupId>org.apache.maven.plugins</groupId>
+  <artifactId>maven-shade-plugin</artifactId>
+  <version>3.4.1</version>
+  <configuration>
+    <createDependencyReducedPom>false</createDependencyReducedPom>
+  </configuration>
+</plugin>
+```
 
 ---
 
-## 🧩 How It Works in Consumer Applications (Across Java & Spring Versions)
+## 📞 Support
 
-This token generator library is designed to be **plug-and-play** across a wide variety of Java and Spring Boot applications, regardless of their versions.
-
-### ✅ Java Compatibility
-- The compiled library is built with `Java 8` compatibility (`target=1.8`), making it **binary-compatible with Java 8, 11, and 17**.
-- Whether your consumer application uses Java 8 for legacy systems or Java 17 for modern microservices, this library can be safely added as a Maven dependency.
-
-### ✅ Spring Boot Compatibility
-- **Spring Boot 2.7.x** (common in stable microservices) — fully supported.
-- **Spring Boot 3.x** — fully compatible, tested with Jakarta namespace changes.
-- Beans like `RestTemplate`, `RetryTemplate`, and `ObjectMapper` are **auto-configured via `@Configuration`**, avoiding any version-specific wiring issues.
-
-### 🔄 How It Integrates with Consumers
-1. **Consumer includes the JAR in its `pom.xml`** and pulls the library via Nexus, GitLab Package Registry, or local install.
-2. **All YAML-based config remains within the consumer app**, giving full control of:
-   - `client-id`, `client-secret`, `certificate`, `retry settings`, etc.
-3. **No component scan is required**, since the library registers its beans explicitly via `@Configuration`.
-4. The consumer simply autowires:
-   ```java
-   @Autowired
-   private TokenGeneratorUtil tokenGeneratorUtil;
-   ```
-5. When `getAccessToken()` is called:
-   - If a valid token is cached, it's returned instantly.
-   - If not, the configured auth mode (basic or cert) is invoked to fetch a new token using `RestTemplate`.
-   - If token generation fails due to a retryable condition (5xx, timeouts), `RetryTemplate` will attempt retries based on configured delay/count.
-
-### 🔐 Secrets & Vault Integration
-- Consumers can inject secrets via:
-  - **Kubernetes Secrets + ConfigMap**
-  - **Helm Values + HashiCorp Vault PEM mount**
-  - **Environment Variables** like `AZURE_CLIENT_ID`, `AZURE_TOKEN_AUTHORIZATION`, etc.
-- The library supports dynamic value resolution using `${...}` in Spring `application.yml`.
-
-### 🧪 Test Strategy for Consumers
-- Unit tests in the consumer app can mock `TokenGeneratorUtil` or stub `RestTemplate` to simulate downstream token responses.
-- Integration tests can override YAML properties for mock tokens.
-
----
+For questions, please contact: **Ganesh Kumar Yadagani**
