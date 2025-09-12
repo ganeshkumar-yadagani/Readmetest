@@ -395,3 +395,109 @@ public class WebSecurityConfiguration {
         return src;
     }
 }
+package com.tmobile.publisher.azurestorage.config;
+
+import com.tmobile.publisher.azurestorage.security.CustomAuthenticationEntryPoint;
+import com.tmobile.publisher.azurestorage.security.JwtAuthenticationFilter;
+import com.tmobile.security.tapp.jwt.validator.JwtValidator;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
+
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+public class WebSecurityConfiguration {
+
+    private final JwtValidator jwtValidator;
+
+    public WebSecurityConfiguration(JwtValidator jwtValidator) {
+        this.jwtValidator = jwtValidator;
+    }
+
+    /** Expected audiences from application.yml */
+    @Value("#{'${api.security.config.audid:}'.trim().isEmpty() ? null : '${api.security.config.audid:}'.trim().split('\\s*,\\s*')}")
+    private List<String> expectedAudiences;
+
+    /** Allowed CORS origins from application.yml */
+    @Value("#{'${security.cors.allowed-origins:https://my-ui.com}'.trim().split('\\s*,\\s*')}")
+    private List<String> corsAllowedOrigins;
+
+    /** Non-secured endpoints from application.yml (ex: /health|GET,/swagger-ui/**|ALL) */
+    @Value("#{'${security.non.secure.endpoints:/swagger-ui/**|ALL,/swagger-ui.html|ALL,/v3/api-docs/**|ALL,/actuator/**|ALL}'.split(',')}")
+    private List<String> nonSecuredEndpoints;
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+
+        http
+            .csrf(csrf -> csrf.disable())
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .headers(headers -> headers
+                .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"))
+                .xssProtection(xss -> xss.block(true))
+                .frameOptions(frame -> frame.sameOrigin())
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .includeSubDomains()
+                    .maxAgeInSeconds(31536000)
+                )
+            )
+            .authorizeHttpRequests(auth -> {
+                // ✅ Register all non-secured endpoints
+                for (String endpoint : nonSecuredEndpoints) {
+                    if (endpoint.contains("|")) {
+                        String[] parts = endpoint.split("\\|");
+                        String path = parts[0].trim();
+                        String method = parts[1].trim().toUpperCase();
+
+                        if ("ALL".equals(method)) {
+                            auth.requestMatchers(path).permitAll();
+                        } else {
+                            auth.requestMatchers(HttpMethod.valueOf(method), path).permitAll();
+                        }
+                    } else {
+                        auth.requestMatchers(endpoint.trim()).permitAll();
+                    }
+                }
+
+                // ✅ CORS preflight always allowed
+                auth.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+
+                // ✅ Everything else requires authentication
+                auth.anyRequest().authenticated();
+            })
+            .addFilterBefore(new JwtAuthenticationFilter(jwtValidator, expectedAudiences),
+                    UsernamePasswordAuthenticationFilter.class)
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(new CustomAuthenticationEntryPoint()))
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+
+        return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowedOrigins(corsAllowedOrigins);
+        cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "NTID", "authtype"));
+        cfg.setExposedHeaders(List.of("Authorization"));
+        cfg.setAllowCredentials(true);
+        cfg.setMaxAge(1800L);
+
+        UrlBasedCorsConfigurationSource src = new UrlBasedCorsConfigurationSource();
+        src.registerCorsConfiguration("/**", cfg);
+        return src;
+    }
+}
