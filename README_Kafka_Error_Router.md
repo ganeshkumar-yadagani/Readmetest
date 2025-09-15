@@ -1,5 +1,152 @@
 package com.tmobile.publisher.azurestorage.security;
 
+import com.tmobile.publisher.azurestorage.security.exception.JwtTokenValidationException;
+import com.tmobile.security.taap.jwt.validator.JwtValidator;
+import com.tmobile.security.taap.jwt.validator.exception.JwtDecoderException;
+import com.tmobile.security.taap.jwt.validator.exception.JwtExpiredException;
+import com.tmobile.security.taap.jwt.validator.exception.JwtValidatorException;
+import com.tmobile.security.taap.jwt.validator.model.TaapJwt;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * Custom JWT authentication filter with detailed debug logs.
+ */
+@Slf4j
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtValidator jwtValidator;
+    private final String[] expectedAudiences;
+
+    private static final String AUTH_HEADER = "Authorization";
+    private static final String BEARER_PREFIX = "Bearer ";
+    private static final String HEADER_NTID = "NTID";
+    private static final String HEADER_AUTH_TYPE = "authType";
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        log.info("JwtAuthenticationFilter triggered for path: {}", request.getRequestURI());
+
+        try {
+            // 1. Extract headers
+            String rawAuthHeader = request.getHeader(AUTH_HEADER);
+            String token = extractBearerToken(request);
+            String ntidHeader = request.getHeader(HEADER_NTID);
+            String authType = request.getHeader(HEADER_AUTH_TYPE);
+
+            log.debug("Raw Authorization header = {}", rawAuthHeader);
+            log.debug("Extracted token present? {}", token != null);
+            log.debug("authType header = {}", authType);
+            log.debug("NTID header = {}", ntidHeader);
+
+            if (StringUtils.isBlank(token)) {
+                log.warn("No JWT token found, skipping filter");
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            if (!"azure".equalsIgnoreCase(authType) && !"api".equalsIgnoreCase(authType)) {
+                throw new JwtTokenValidationException("Invalid authType header: " + authType, HttpStatus.UNAUTHORIZED);
+            }
+
+            // 2. Decode + validate JWT
+            TaapJwt jwt = jwtValidator.decodeAccessToken(token);
+            log.debug("Decoded JWT claims = {}", jwt.getClaims());
+
+            validateClaims(jwt, ntidHeader);
+
+            // 3. Build authentication object
+            Authentication authentication = new UsernamePasswordAuthenticationToken(
+                    ntidHeader, null, Collections.emptyList());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+
+            log.info("JWT authentication successful for NTID={}", ntidHeader);
+
+        } catch (JwtDecoderException ex) {
+            handleFailure(response, "Access token is not a valid JWT", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtExpiredException ex) {
+            handleFailure(response, "Access token expired", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtValidatorException ex) {
+            handleFailure(response, "Access token validation failed", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtTokenValidationException ex) {
+            handleFailure(response, ex.getMessage(), ex, ex.getStatus());
+            return;
+        } catch (Exception ex) {
+            handleFailure(response, "Unexpected error during token validation", ex, HttpStatus.INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        filterChain.doFilter(request, response);
+    }
+
+    private String extractBearerToken(HttpServletRequest request) {
+        String header = request.getHeader(AUTH_HEADER);
+        if (StringUtils.isNotBlank(header) &&
+                header.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {
+            return header.substring(BEARER_PREFIX.length()).trim();
+        }
+        return null;
+    }
+
+    private void validateClaims(TaapJwt jwt, String ntidHeader) {
+        if (jwt == null || jwt.getClaims() == null) {
+            throw new JwtTokenValidationException("JWT claims not found", HttpStatus.UNAUTHORIZED);
+        }
+        Map<String, Object> claims = jwt.getClaims();
+        Object ntidClaim = claims.get("ntid");
+
+        if (ntidClaim == null) {
+            throw new JwtTokenValidationException("NTID claim missing in JWT", HttpStatus.UNAUTHORIZED);
+        }
+
+        if (!StringUtils.equalsIgnoreCase(ntidClaim.toString(), ntidHeader)) {
+            throw new JwtTokenValidationException("NTID mismatch", HttpStatus.UNAUTHORIZED);
+        }
+
+        log.debug("NTID claim validated successfully");
+    }
+
+    private void handleFailure(HttpServletResponse response, String message, Exception ex, HttpStatus status)
+            throws IOException {
+        log.error("Authentication failed: {}", message, ex);
+        response.setStatus(status.value());
+        response.setContentType("application/json");
+        response.getWriter().write("{\"error\":\"" + message + "\"}");
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path.contains("/swagger-ui")
+                || path.contains("/v3/api-docs")
+                || path.contains("/actuator");
+    }
+}
+
+
+
+package com.tmobile.publisher.azurestorage.security;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
