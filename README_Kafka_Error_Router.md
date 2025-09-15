@@ -1,5 +1,104 @@
 package com.tmobile.publisher.azurestorage.security;
 
+import com.tmobile.security.taap.jwt.validator.JwtValidator;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
+
+/**
+ * Main Spring Security configuration.
+ */
+@Slf4j
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class WebSecurityConfiguration {
+
+    private final JwtValidator jwtValidator;
+    private final CustomAuthenticationEntryPoint customAuthenticationEntryPoint;
+
+    /**
+     * Expose JwtAuthenticationFilter as a bean so Spring can wire it and register it in the filter chain.
+     */
+    @Bean
+    public JwtAuthenticationFilter jwtAuthenticationFilter() {
+        String[] expectedAudiences = {"your-audience"}; // TODO: configure from application.yml
+        log.info("Creating JwtAuthenticationFilter bean with expected audiences={}", (Object) expectedAudiences);
+        return new JwtAuthenticationFilter(jwtValidator, expectedAudiences);
+    }
+
+    /**
+     * Main security filter chain.
+     */
+    @Bean
+    @Order(1)
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   JwtAuthenticationFilter jwtAuthenticationFilter) throws Exception {
+        log.info("Registering JwtAuthenticationFilter in security chain...");
+
+        http
+            // Disable defaults
+            .csrf(AbstractHttpConfigurer::disable)
+            .formLogin(AbstractHttpConfigurer::disable)
+            .httpBasic(AbstractHttpConfigurer::disable)
+
+            // Stateless session
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+            // Exception handling
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(customAuthenticationEntryPoint))
+
+            // Authorization
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(
+                        "/swagger-ui/**",
+                        "/v3/api-docs/**",
+                        "/actuator/**"
+                ).permitAll()
+                .anyRequest().authenticated()
+            )
+
+            // Add our custom JWT filter
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    /**
+     * CORS configuration.
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowedOrigins(List.of("http://localhost:8080"));
+        cfg.setAllowedMethods(List.of("GET", "PUT", "POST", "DELETE", "OPTIONS"));
+        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "NTID", "authType"));
+        cfg.setAllowCredentials(true);
+        cfg.setMaxAge(1800L); // 30 min preflight cache
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", cfg);
+        return source;
+    }
+}
+
+
+package com.tmobile.publisher.azurestorage.security;
+
 import com.tmobile.publisher.azurestorage.security.exception.JwtTokenValidationException;
 import com.tmobile.security.taap.jwt.validator.JwtValidator;
 import com.tmobile.security.taap.jwt.validator.exception.JwtDecoderException;
