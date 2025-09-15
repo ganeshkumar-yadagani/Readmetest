@@ -1,5 +1,259 @@
 package com.tmobile.publisher.azurestorage.security;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
+
+/**
+ * Main security configuration for the Azure Storage Publisher service.
+ */
+@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class WebSecurityConfiguration {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final CustomAuthenticationEntryPoint customAuthenticationEntryPoint;
+
+    @Bean
+    @Order(1)
+    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+            // Disable default security features
+            .csrf(AbstractHttpConfigurer::disable)
+            .formLogin(AbstractHttpConfigurer::disable)
+            .httpBasic(AbstractHttpConfigurer::disable)
+
+            // Stateless session
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+            // Exception handling
+            .exceptionHandling(ex -> ex.authenticationEntryPoint(customAuthenticationEntryPoint))
+
+            // Authorization rules
+            .authorizeHttpRequests(auth -> auth
+                .requestMatchers(
+                    "/swagger-ui/**",
+                    "/v3/api-docs/**",
+                    "/actuator/**"
+                ).permitAll()
+                .anyRequest().authenticated()
+            )
+
+            // Add custom JWT filter
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration cfg = new CorsConfiguration();
+        cfg.setAllowedOrigins(List.of("http://localhost:8080"));
+        cfg.setAllowedMethods(List.of("GET", "PUT", "POST", "DELETE", "OPTIONS"));
+        cfg.setAllowedHeaders(List.of("Authorization", "Content-Type", "NTID", "authType"));
+        cfg.setAllowCredentials(true);
+        cfg.setMaxAge(1800L); // 30 min preflight cache
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", cfg);
+        return source;
+    }
+}
+
+
+package com.tmobile.publisher.azurestorage.security;
+
+import com.tmobile.publisher.azurestorage.security.exception.JwtTokenValidationException;
+import com.tmobile.security.taap.jwt.validator.JwtValidator;
+import com.tmobile.security.taap.jwt.validator.exception.JwtDecoderException;
+import com.tmobile.security.taap.jwt.validator.exception.JwtExpiredException;
+import com.tmobile.security.taap.jwt.validator.exception.JwtValidatorException;
+import com.tmobile.security.taap.jwt.validator.model.TaapJwt;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * Custom JWT authentication filter.
+ */
+@Slf4j
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private final JwtValidator jwtValidator;
+    private final String[] expectedAudiences;
+
+    private static final String AUTH_HEADER = "Authorization";
+    private static final String BEARER_PREFIX = "Bearer ";
+    private static final String HEADER_NTID = "NTID";
+    private static final String HEADER_AUTH_TYPE = "authType";
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,
+                                    HttpServletResponse response,
+                                    FilterChain filterChain) throws ServletException, IOException {
+        try {
+            String token = extractBearerToken(request);
+            String ntidHeader = request.getHeader(HEADER_NTID);
+            String authType = request.getHeader(HEADER_AUTH_TYPE);
+
+            if (StringUtils.isBlank(token)) {
+                log.debug("No Authorization header found, skipping filter");
+                filterChain.doFilter(request, response);
+                return;
+            }
+
+            if (!"azure".equalsIgnoreCase(authType)) {
+                throw new JwtTokenValidationException("Invalid authType", HttpStatus.UNAUTHORIZED);
+            }
+
+            // Validate access token
+            TaapJwt jwt = jwtValidator.decodeAccessToken(token);
+            validateClaims(jwt, ntidHeader);
+
+            // Build authentication object
+            Authentication authentication = new UsernamePasswordAuthenticationToken(
+                    ntidHeader, null, Collections.emptyList());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+
+            log.info("JWT authentication successful for NTID={}", ntidHeader);
+
+        } catch (JwtDecoderException ex) {
+            handleFailure(response, "Access token is not a valid JWT", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtExpiredException ex) {
+            handleFailure(response, "Access token expired", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtValidatorException ex) {
+            handleFailure(response, "Access token validation failed", ex, HttpStatus.UNAUTHORIZED);
+            return;
+        } catch (JwtTokenValidationException ex) {
+            handleFailure(response, ex.getMessage(), ex, ex.getStatus());
+            return;
+        } catch (Exception ex) {
+            handleFailure(response, "Unexpected error during token validation", ex, HttpStatus.INTERNAL_SERVER_ERROR);
+            return;
+        }
+
+        filterChain.doFilter(request, response);
+    }
+
+    private String extractBearerToken(HttpServletRequest request) {
+        String header = request.getHeader(AUTH_HEADER);
+        if (StringUtils.isNotBlank(header) &&
+                header.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {
+            return header.substring(BEARER_PREFIX.length()).trim();
+        }
+        return null;
+    }
+
+    private void validateClaims(TaapJwt jwt, String ntidHeader) {
+        if (jwt == null || jwt.getClaims() == null) {
+            throw new JwtTokenValidationException("JWT claims not found", HttpStatus.UNAUTHORIZED);
+        }
+        Map<String, Object> claims = jwt.getClaims();
+        Object ntidClaim = claims.get("ntid");
+        if (ntidClaim == null || !StringUtils.equalsIgnoreCase(ntidClaim.toString(), ntidHeader)) {
+            throw new JwtTokenValidationException("NTID mismatch", HttpStatus.UNAUTHORIZED);
+        }
+    }
+
+    private void handleFailure(HttpServletResponse response, String message, Exception ex, HttpStatus status)
+            throws IOException {
+        log.error("Authentication failed: {}", message, ex);
+        response.setStatus(status.value());
+        response.setContentType("application/json");
+        response.getWriter().write("{\"error\":\"" + message + "\"}");
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path.contains("/swagger-ui")
+                || path.contains("/v3/api-docs")
+                || path.contains("/actuator");
+    }
+}
+
+
+package com.tmobile.publisher.azurestorage.security;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.stereotype.Component;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Custom AuthenticationEntryPoint.
+ * Ensures unauthorized requests return JSON instead of redirecting to login.
+ */
+@Slf4j
+@Component
+public class CustomAuthenticationEntryPoint implements AuthenticationEntryPoint {
+
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    @Override
+    public void commence(HttpServletRequest request,
+                         HttpServletResponse response,
+                         AuthenticationException authException) throws IOException {
+        log.error("Unauthorized request to {}: {}", request.getRequestURI(), authException.getMessage());
+
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json");
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("error", "Unauthorized");
+        body.put("message", authException.getMessage());
+        body.put("path", request.getRequestURI());
+
+        response.getWriter().write(mapper.writeValueAsString(body));
+    }
+}
+
+
+
+
+
+
+
+
+package com.tmobile.publisher.azurestorage.security;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.AuthenticationException;
 
