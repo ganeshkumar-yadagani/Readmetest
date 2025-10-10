@@ -1,3 +1,81 @@
+# =========================================================
+#  Kaniko build job for Docker image build & push
+#  Supports both pull-only and push-enabled credentials
+# =========================================================
+
+kaniko-package: &kaniko-package
+  image:
+    name: registry.gitlab.com/tmobile/deepio/docker_images/cp-kafka-rest:1.24.0
+    entrypoint: [""]
+  tags: [ $CDP_K8S_MEDIUM, $CDP_K8S_TAG ]
+
+  # -----------------------------------------
+  # Dynamically choose which credentials to use
+  # -----------------------------------------
+  variables:
+    # Default to pull credentials
+    CI_REGISTRY_USER: $IMAGE_PULL_USER_CLOUD
+    CI_REGISTRY_PASSWORD: $IMAGE_PULL_SECRET_CLOUD
+
+    # If release branch or tagged build, use push credentials
+    # (GitLab evaluates rules top-down)
+    # Use CI/CD variables IMAGE_PUSH_USER_CLOUD and IMAGE_PUSH_SECRET_CLOUD
+    # with write_registry access
+    DOCKER_AUTH_CONFIG: >
+      {
+        "auths": {
+          "${CI_REGISTRY}": {
+            "username": "${CI_REGISTRY_USER}",
+            "password": "${CI_REGISTRY_PASSWORD}"
+          }
+        }
+      }
+
+    # Dynamic tag name
+    DOCKER_TAG: "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}${DEPLOY_AS}"
+
+  # -----------------------------------------
+  # Rules to switch credentials automatically
+  # -----------------------------------------
+  before_script:
+    - echo "Selected CI_REGISTRY_USER=${CI_REGISTRY_USER}"
+    - echo "Current branch: ${CI_COMMIT_REF_NAME}"
+    - |
+      if [[ "$CI_COMMIT_REF_NAME" =~ ^(release|main|master)$ || "$CI_COMMIT_TAG" != "" ]]; then
+        echo "🔐 Using push credentials (write access)..."
+        export CI_REGISTRY_USER="$IMAGE_PUSH_USER_CLOUD"
+        export CI_REGISTRY_PASSWORD="$IMAGE_PUSH_SECRET_CLOUD"
+      else
+        echo "🔒 Using pull-only credentials (read access)..."
+      fi
+
+    # Rebuild DOCKER_AUTH_CONFIG based on chosen creds
+    - export DOCKER_AUTH_CONFIG="{\"auths\":{\"${CI_REGISTRY}\":{\"username\":\"${CI_REGISTRY_USER}\",\"password\":\"${CI_REGISTRY_PASSWORD}\"}}}"
+    - echo "Auth config prepared."
+
+  # -----------------------------------------
+  # Kaniko build script
+  # -----------------------------------------
+  script:
+    - echo "Starting Kaniko build..."
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${DOCKER_TAG}"
+      --cache=true
+      --cache-ttl=24h
+      --skip-tls-verify
+
+  # -----------------------------------------
+  # Artifacts (to persist .env etc.)
+  # -----------------------------------------
+  artifacts:
+    reports:
+      dotenv: $GLOBAL_DOTENV
+    expire_in: 120 days
+
+
+
 # --------------------------------------------------------
 # Shared templates for secret scanning & container scanning
 # --------------------------------------------------------
